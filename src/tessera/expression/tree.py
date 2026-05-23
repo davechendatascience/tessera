@@ -265,6 +265,68 @@ def replace_at(root: Node, target_index: int, new_node: Node) -> Node:
     return visit(root)
 
 
+# ---------------- Constant introspection ----------------
+
+def collect_const_values(node: Node) -> list[float]:
+    """Return the value of each Const leaf in pre-order traversal.
+
+    Used by GP's constant-optimisation polish step: extract the current
+    numerical constants, hand them to scipy.optimize.minimize, then
+    splat the optimised values back in via `set_const_values`.
+    """
+    vals: list[float] = []
+
+    def visit(n: Node) -> None:
+        if isinstance(n, Const):
+            vals.append(n.value)
+        elif isinstance(n, Var):
+            return
+        elif isinstance(n, UnOp):
+            visit(n.a)
+        elif isinstance(n, BinOp):
+            visit(n.a); visit(n.b)
+        elif isinstance(n, FunctionalOp):
+            for a in n.args:
+                visit(a)
+        elif isinstance(n, FunctionalOp2D):
+            visit(n.arg)
+
+    visit(node)
+    return vals
+
+
+def set_const_values(node: Node, new_values: list[float]) -> Node:
+    """Return a new tree with each Const leaf replaced by the next value
+    from `new_values` (consumed in pre-order).
+
+    Length mismatch behaviour:
+      - if `new_values` has fewer entries than Const leaves, the extras
+        keep their original values.
+      - if it has more, the surplus is silently ignored.
+    """
+    vals_iter = iter(new_values)
+
+    def visit(n: Node) -> Node:
+        if isinstance(n, Const):
+            try:
+                return Const(float(next(vals_iter)))
+            except StopIteration:
+                return n
+        if isinstance(n, Var):
+            return n
+        if isinstance(n, UnOp):
+            return UnOp(n.op, visit(n.a))
+        if isinstance(n, BinOp):
+            return BinOp(n.op, visit(n.a), visit(n.b))
+        if isinstance(n, FunctionalOp):
+            return FunctionalOp(n.functional, tuple(visit(a) for a in n.args))
+        if isinstance(n, FunctionalOp2D):
+            return FunctionalOp2D(n.measure_2d, visit(n.arg))
+        raise TypeError(type(n))
+
+    return visit(node)
+
+
 # ---------------- Simplification ----------------
 
 def _is_const_value(node: Node, value: float, tol: float = 1e-12) -> bool:

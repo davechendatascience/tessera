@@ -36,7 +36,7 @@ from .tree import (
     Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D, Node,
     BIN_OPS, UN_OPS, BIN_OP_FNS, UN_OP_FNS,
     complexity, depth, used_features, iter_subtrees, replace_at, evaluate,
-    simplify,
+    simplify, collect_const_values, set_const_values,
 )
 from .mutation import (
     MAX_DEPTH, MAX_COMPLEXITY, MAX_CONST_MAGNITUDE,
@@ -48,6 +48,7 @@ from .mutation import (
 )
 from .gp import (
     GPConfig, Candidate, GP, mse_loss, pareto_front,
+    optimize_constants,
 )
 from .measure_2d import (
     Atom2D, Measure2D,
@@ -70,7 +71,7 @@ __all__ = [
     "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "FunctionalOp2D", "Node",
     "BIN_OPS", "UN_OPS", "BIN_OP_FNS", "UN_OP_FNS",
     "complexity", "depth", "used_features", "iter_subtrees", "replace_at", "evaluate",
-    "simplify",
+    "simplify", "collect_const_values", "set_const_values",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",
@@ -80,6 +81,7 @@ __all__ = [
     "OP_WEIGHTS", "mutate",
     # gp
     "GPConfig", "Candidate", "GP", "mse_loss", "pareto_front",
+    "optimize_constants",
     # 2D measures
     "Atom2D", "Measure2D",
     "measure_2d_atomic", "measure_2d_separable",
