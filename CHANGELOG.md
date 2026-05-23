@@ -7,7 +7,41 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- _(work in progress: GP search engine over Measure + Functional + pointwise operators)_
+- **`tessera.expression.tree`** — Five Node types (Var, Const, BinOp,
+  UnOp, FunctionalOp) as frozen tagged-union dataclasses. Pointwise op
+  tables (add/sub/mul/div/min/max, tanh/abs/sign/neg). Structural
+  helpers: `complexity`, `depth`, `used_features`, `iter_subtrees`,
+  `replace_at`. `evaluate(node, env, cache)` walker with automatic
+  FunctionalCache integration.
+- **`tessera.expression.mutation`** — `random_tree`, `random_measure`,
+  `random_functional` for population init + mutation fresh material.
+  Six classic mutation operators (`subtree_swap`, `subtree_crossover`,
+  `constant_jitter`, `term_insert`, `term_delete`, `op_swap`) plus
+  `measure_mutate` (tessera-specific: replace the measure inside a
+  FunctionalOp). `mutate()` weighted dispatcher with retry-on-invalid.
+  `validate_tree()` enforces depth/complexity/feature/constant caps.
+- **`tessera.expression.gp`** — Population-based (μ+λ) GP loop with
+  tournament selection, parsimony-weighted fitness, Pareto-front
+  elitism, early-stop on plateau. `GPConfig` knobs, `Candidate` frozen
+  dataclass, `GP.run(env, y_true, features)` returns the final Pareto
+  front sorted ascending by complexity. `pareto_front()` and
+  `mse_loss()` exposed as public utilities. `n_workers > 1` enables
+  ProcessPoolExecutor multiprocessing (honest perf characterisation
+  documented in GPConfig — modest gains on large problems; threading
+  with `nogil=True` numba would be the bigger lever).
+- **`tessera.expression` README** — full API map, primitive examples,
+  use-cases-by-domain table, performance characteristics, mathematical
+  foundations.
+
+### Tests
+117/117 passing across `tests/expression/`:
+- 18 measure construction / kernel correctness
+- 10 JIT backend routing + speedup smoke
+- 13 cache memory / disk / LRU
+- 12 functional bilinear / Volterra / cache-aware apply
+- 25 tree Node types + evaluator + cache subexpression sharing
+- 20 mutation operators + random tree generation + dispatcher
+- 19 GP loop end-to-end + Pareto + reproducibility + multiprocessing
 
 ## [0.1.0] — 2026-05-24
 

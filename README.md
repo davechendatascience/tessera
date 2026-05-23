@@ -77,8 +77,11 @@ y = apply_with_cache(bil, cache, var_ids=("x", "x"), xs=(x, x))
 ## Status
 
 - **v0.1** — `tessera.expression` ships with `Measure`, `Functional`,
-  `FunctionalCache`, Numba-JIT kernels. **53/53 tests passing.**
-- Next: GP search engine over Measure + Functional + pointwise operators.
+  `FunctionalCache`, Numba-JIT kernels, Expr `tree`, `mutation`
+  operators, and a population-based `GP` search loop.
+  **117/117 tests passing.**  See [`src/tessera/expression/README.md`](src/tessera/expression/README.md).
+- Next: port the koopman / ssm / mts / diff_eml modules from
+  market-analysis under the same packaging.
 
 ## License
 
