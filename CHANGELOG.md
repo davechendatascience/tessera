@@ -6,6 +6,25 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research notes)
+- **`docs/research_notes/invariance_in_sr.md`** — invariance, sensor
+  data, and axis-semantic SR. Argues for making **axis semantics a
+  first-class search choice**: every variable carries not just a
+  shape but an axis-type declaration (Translation, Permutation,
+  Cyclic, LogTranslation, Rotation, Graph), and operators are
+  constrained by axis-type compatibility. Three motivations:
+  generality across sensor modalities (video, audio, multi-asset,
+  point clouds), interpretability-with-invariance (the strongest
+  unique claim for tessera vs CNNs and vanilla SR), and a clean
+  GPU dispatch (each invariance group → its canonical GPU primitive).
+  Sketches a new `tessera.axes` submodule and connects to the
+  perfect-info game framework's |E_K| conjecture via Burnside-
+  flavoured group-quotient compression. Includes a concrete first
+  step: validate the underlying claim by running MNIST 0-vs-rest
+  classification with `FunctionalOp2D` + hardcoded mean-aggregation
+  on tessera's CURRENT (untyped) machinery, before investing in
+  axis-types architecture.
+
 ### Added (measure algebra)
 - **`Measure.compose(other)`** — measure convolution `μ * ν` returning
   a new canonical Measure. Maps to the operator-algebra identity
