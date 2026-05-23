@@ -32,6 +32,11 @@ from .functional import (
     Functional, LinearFunctional, SeparableBilinear, Volterra2,
     apply_with_cache,
 )
+from .tree import (
+    Var, Const, BinOp, UnOp, FunctionalOp, Node,
+    BIN_OPS, UN_OPS, BIN_OP_FNS, UN_OP_FNS,
+    complexity, depth, used_features, iter_subtrees, replace_at, evaluate,
+)
 
 __all__ = [
     # measure
@@ -43,4 +48,8 @@ __all__ = [
     # functional
     "Functional", "LinearFunctional", "SeparableBilinear", "Volterra2",
     "apply_with_cache",
+    # tree
+    "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "Node",
+    "BIN_OPS", "UN_OPS", "BIN_OP_FNS", "UN_OP_FNS",
+    "complexity", "depth", "used_features", "iter_subtrees", "replace_at", "evaluate",
 ]
