@@ -45,6 +45,9 @@ from .mutation import (
     term_insert, term_delete, op_swap, measure_mutate,
     OP_WEIGHTS, mutate,
 )
+from .gp import (
+    GPConfig, Candidate, GP, mse_loss, pareto_front,
+)
 
 __all__ = [
     # measure
@@ -67,4 +70,6 @@ __all__ = [
     "subtree_swap", "subtree_crossover", "constant_jitter",
     "term_insert", "term_delete", "op_swap", "measure_mutate",
     "OP_WEIGHTS", "mutate",
+    # gp
+    "GPConfig", "Candidate", "GP", "mse_loss", "pareto_front",
 ]
