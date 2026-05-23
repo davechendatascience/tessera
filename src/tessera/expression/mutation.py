@@ -184,6 +184,7 @@ def random_tree(
     binop_prob: float = 0.45,
     funcop_prob: float = 0.25,
     enable_2d: bool = False,
+    pointwise_only: bool = False,
 ) -> Node:
     """Generate a random tree with bounded depth.
 
@@ -197,7 +198,17 @@ def random_tree(
         If True, the funcop_prob branch chooses between FunctionalOp (1-D)
         and FunctionalOp2D (2-D) with 50/50 odds. The caller is responsible
         for ensuring the env passed to evaluate() is 2-D-compatible.
+    pointwise_only : bool
+        If True, no FunctionalOp / FunctionalOp2D nodes are generated; the
+        funcop_prob mass is redistributed to binop_prob. Use for pure
+        ODE rediscovery where the target is a closed-form expression in
+        the input variables (e.g., Lorenz-63: dx/dt = 10(y-x)).
     """
+    if pointwise_only:
+        # Redistribute funcop weight into binop, keep proportions otherwise
+        binop_prob = binop_prob + funcop_prob
+        funcop_prob = 0.0
+
     if max_depth <= 1:
         if rng.random() < 0.80:
             return _random_var(rng, feature_names)
@@ -217,25 +228,30 @@ def random_tree(
     if r < leaf_p + unop_p:
         op = rng.choice(UN_OPS)
         return UnOp(op, random_tree(rng, feature_names, max_depth=max_depth - 1,
-                                    enable_2d=enable_2d))
+                                    enable_2d=enable_2d, pointwise_only=pointwise_only))
 
     if r < leaf_p + unop_p + binop_p:
         op = rng.choice(BIN_OPS)
         return BinOp(
             op,
-            random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d),
-            random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d),
+            random_tree(rng, feature_names, max_depth=max_depth - 1,
+                        enable_2d=enable_2d, pointwise_only=pointwise_only),
+            random_tree(rng, feature_names, max_depth=max_depth - 1,
+                        enable_2d=enable_2d, pointwise_only=pointwise_only),
         )
 
-    # FunctionalOp branch — choose 1-D or 2-D
+    # FunctionalOp branch (only reachable when pointwise_only=False) —
+    # choose 1-D or 2-D.
     if enable_2d and rng.random() < 0.5:
         m2d = random_measure_2d(rng)
-        arg = random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d)
+        arg = random_tree(rng, feature_names, max_depth=max_depth - 1,
+                          enable_2d=enable_2d, pointwise_only=pointwise_only)
         return FunctionalOp2D(m2d, arg)
 
     fn = random_functional(rng)
     args = tuple(
-        random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d)
+        random_tree(rng, feature_names, max_depth=max_depth - 1,
+                    enable_2d=enable_2d, pointwise_only=pointwise_only)
         for _ in range(fn.n_inputs)
     )
     return FunctionalOp(fn, args)
@@ -249,11 +265,16 @@ def subtree_swap(
     feature_names: list[str],
     *,
     subtree_max_depth: int = 3,
+    pointwise_only: bool = False,
+    enable_2d: bool = False,
 ) -> Node:
     """Replace a random subtree with a fresh random subtree."""
     n_subs = sum(1 for _ in iter_subtrees(tree))
     idx = rng.randrange(n_subs)
-    fresh = random_tree(rng, feature_names, max_depth=subtree_max_depth)
+    fresh = random_tree(
+        rng, feature_names, max_depth=subtree_max_depth,
+        pointwise_only=pointwise_only, enable_2d=enable_2d,
+    )
     return replace_at(tree, idx, fresh)
 
 
@@ -297,10 +318,16 @@ def term_insert(
     tree: Node,
     rng: random.Random,
     feature_names: list[str],
+    *,
+    pointwise_only: bool = False,
+    enable_2d: bool = False,
 ) -> Node:
     """Wrap root in `root +/- random_subtree`. Grows complexity by ~3-5."""
     op = rng.choice(["add", "sub"])
-    addend = random_tree(rng, feature_names, max_depth=2)
+    addend = random_tree(
+        rng, feature_names, max_depth=2,
+        pointwise_only=pointwise_only, enable_2d=enable_2d,
+    )
     return BinOp(op, tree, addend)
 
 
@@ -432,10 +459,16 @@ def mutate(
     feature_names: list[str],
     *,
     max_attempts: int = 5,
+    pointwise_only: bool = False,
+    enable_2d: bool = False,
 ) -> Optional[Node]:
     """Produce one valid offspring from a list of parents.
 
     Returns the new tree, or None if all attempts violated constraints.
+
+    When `pointwise_only=True`, the dispatcher skips measure_mutate and
+    measure_2d_mutate (no functional ops to mutate) and passes the flag
+    to subtree_swap / term_insert (which call random_tree).
     """
     if not parents:
         raise ValueError("mutate needs at least one parent")
@@ -445,9 +478,15 @@ def mutate(
 
     for _ in range(max_attempts):
         op_name = rng.choices(keys, weights=weights, k=1)[0]
+        if pointwise_only and op_name in ("measure_mutate", "measure_2d_mutate"):
+            # No FunctionalOp / FunctionalOp2D in pointwise-only trees.
+            continue
         try:
             if op_name == "subtree_swap":
-                child = subtree_swap(parents[0], rng, feature_names)
+                child = subtree_swap(
+                    parents[0], rng, feature_names,
+                    pointwise_only=pointwise_only, enable_2d=enable_2d,
+                )
             elif op_name == "subtree_crossover":
                 if len(parents) < 2:
                     continue
@@ -455,7 +494,10 @@ def mutate(
             elif op_name == "constant_jitter":
                 child = constant_jitter(parents[0], rng)
             elif op_name == "term_insert":
-                child = term_insert(parents[0], rng, feature_names)
+                child = term_insert(
+                    parents[0], rng, feature_names,
+                    pointwise_only=pointwise_only, enable_2d=enable_2d,
+                )
             elif op_name == "term_delete":
                 child = term_delete(parents[0], rng)
             elif op_name == "op_swap":

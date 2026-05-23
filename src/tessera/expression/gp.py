@@ -81,6 +81,13 @@ class GPConfig:
     search over 2-D fields). The caller is responsible for env having
     2-D arrays as values."""
 
+    # Pointwise-only mode (for pure ODE rediscovery)
+    pointwise_only: bool = False
+    """If True, no FunctionalOp / FunctionalOp2D nodes are generated.
+    Suitable for SR on closed-form analytic targets like Lorenz-63 or
+    Feynman benchmarks where the answer is a polynomial in the input
+    variables (no temporal/functional structure needed)."""
+
     # Multiprocessing
     n_workers: int = 1
     """1 = sequential (no MP); >1 spawns a ProcessPoolExecutor.
@@ -343,6 +350,7 @@ class GP:
                 self.rng, feature_names,
                 max_depth=self.cfg.init_max_depth,
                 enable_2d=self.cfg.enable_2d,
+                pointwise_only=self.cfg.pointwise_only,
             )
             if validate_tree(tree, set(feature_names)) is not None:
                 continue
@@ -390,7 +398,11 @@ class GP:
         while len(new_trees) < self.cfg.pop_size:
             a = self._tournament(pop)
             b = self._tournament(pop)
-            child_tree = mutate([a.tree, b.tree], self.rng, feature_names)
+            child_tree = mutate(
+                [a.tree, b.tree], self.rng, feature_names,
+                pointwise_only=self.cfg.pointwise_only,
+                enable_2d=self.cfg.enable_2d,
+            )
             if child_tree is None:
                 continue
             new_trees.append(child_tree)
