@@ -26,7 +26,8 @@ discovery, time-series modeling, PDE identification, and more.
 
 | Module | Status | Purpose |
 |---|---|---|
-| [`tessera.expression`](src/tessera/expression/README.md) | shipping (v0.1) | Symbolic operators + measure-theoretic kernels + GP search |
+| [`tessera.expression`](src/tessera/expression/README.md) | shipping (v0.1) | Symbolic operators + measure-theoretic kernels |
+| [`tessera.search`](src/tessera/search/README.md) | shipping (v0.2) | Search over Expr trees — GP, SimulatedAnnealing, RandomSearch |
 | [`tessera.koopman`](src/tessera/koopman/README.md) | shipping (v0.1.1) | Explicit-latent Koopman with time-delay embedding |
 | `tessera.ssm` | planned | Kalman / state-space filtering |
 | `tessera.mts` | planned | Multi-timescale analysis |

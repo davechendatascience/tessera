@@ -7,6 +7,32 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`tessera.search` submodule** — extracts the search machinery from
+  `tessera.expression.gp` into a dedicated submodule with a shared
+  `Candidate` type, `pareto_front`, `mse_loss`, `_evaluate_tree`, and
+  `optimize_constants`. Three searchers now share this infrastructure:
+  - `GP` — population-based evolutionary search (was in expression.gp)
+  - `SimulatedAnnealing` — single-state Metropolis-acceptance search
+    with exponential/linear cooling, optional const-opt polish, and
+    multi-restart support (new)
+  - `RandomSearch` — i.i.d. random-tree baseline (new)
+  All three return the same `Candidate` shape so Pareto fronts merge
+  across algorithms (`pareto_front(gp_front + sa_front + rs_front)`
+  is a single line). Backwards compatibility preserved: existing
+  `from tessera.expression import GP, GPConfig, ...` keeps working
+  via a re-export shim in `tessera.expression.gp`.
+
+### Added (search submodule details)
+- **`tessera.search.SimulatedAnnealing`** — Metropolis acceptance with
+  `min(1, exp(-Δfitness/T))`, exponential or linear cooling, optional
+  Const-leaf polish every K accepted moves, optional multi-restart.
+  Provable convergence in probability under log-cooling
+  (Geman & Geman 1984). Single-state search is easier to debug than
+  a population.
+- **`tessera.search.RandomSearch`** — sample N random trees, score,
+  return Pareto front. Baseline for comparison; any directed searcher
+  should beat it on a matched budget.
+
 - **`tessera.koopman.LatentKoopman`** — Closed-form latent Koopman
   with time-delay embedding. Five-step identification:
   reduced-rank ridge OLS of one-step prediction operator β → SVD
