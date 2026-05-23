@@ -93,13 +93,90 @@ def test_interval_gt_tight_when_possible():
     assert iv.lo == 0.0 and iv.hi == 1.0
 
 
-def test_interval_functional_is_unbounded():
-    """FunctionalOp args fall through to ±inf (conservative)."""
+def test_interval_functional_linear_bounded():
+    """LinearFunctional now gets a tight L1-norm bound (step c)."""
     from tessera.expression import LinearFunctional, measure_lag, FunctionalOp
     tree = FunctionalOp(LinearFunctional(measure=measure_lag(1)), (Var("x"),))
     iv = interval_evaluate(tree, {"x": Interval(0.0, 1.0)})
-    # Either both inf or at least one — implementation returns full ±inf
+    # measure_lag has ||m||_1 = 1, x in [0, 1] → output in [-1, 1] (could be
+    # tighter since the input is non-negative, but the conservative bound is sound).
+    assert iv.lo == pytest.approx(-1.0)
+    assert iv.hi == pytest.approx(1.0)
+
+
+def test_interval_functional_2d_unbounded():
+    """FunctionalOp2D still conservative ±inf (future tightening)."""
+    from tessera.expression import (
+        FunctionalOp2D, measure_2d_diff_t,
+    )
+    tree = FunctionalOp2D(measure_2d_diff_t(lag_t=1), Var("x"))
+    iv = interval_evaluate(tree, {"x": Interval(0.0, 1.0)})
     assert iv.lo == -float("inf") or iv.hi == float("inf")
+
+
+def test_measure_l1_norm():
+    """L1 norm matches sum of |kernel| for atomic + density measures."""
+    from tessera.expression import measure_signed_sum, measure_ema, measure_diff
+    from tessera.expression.interval import measure_l1_norm
+    # Atomic only: ||(1·δ(0) + -1·δ(1))||_1 = 2
+    assert measure_l1_norm(measure_diff(1)) == pytest.approx(2.0)
+    # EMA: density integrates to ~1 (geometric series)
+    l1_ema = measure_l1_norm(measure_ema(halflife=10))
+    assert 0.95 < l1_ema < 1.01
+    # Mixed: atom weight 2 + atom weight -1 → ||·||_1 = 3
+    assert measure_l1_norm(measure_signed_sum([(2.0, 0), (-1.0, 5)])) == pytest.approx(3.0)
+
+
+def test_interval_separable_bilinear_bound():
+    """SeparableBilinear bound is the product of LinearFunctional bounds."""
+    from tessera.expression import (
+        FunctionalOp, SeparableBilinear, measure_diff, measure_ema,
+    )
+    tree = FunctionalOp(
+        SeparableBilinear(measure_a=measure_diff(1), measure_b=measure_ema(halflife=10)),
+        (Var("x"), Var("y")),
+    )
+    env_iv = {"x": Interval(-1.0, 1.0), "y": Interval(0.0, 2.0)}
+    iv = interval_evaluate(tree, env_iv)
+    # ||diff||_1 = 2, ||ema(10)||_1 ≈ 1; M_x = 1, M_y = 2
+    # bound = 2 * 1 * 1 * 2 = 4
+    assert iv.lo == pytest.approx(-4.0, rel=0.05)
+    assert iv.hi == pytest.approx(4.0, rel=0.05)
+
+
+def test_interval_volterra2_bound():
+    """Volterra2 bound is the squared LinearFunctional bound on x."""
+    from tessera.expression import FunctionalOp, Volterra2, measure_diff
+    tree = FunctionalOp(
+        Volterra2(measure_a=measure_diff(1), measure_b=measure_diff(1)),
+        (Var("x"),),
+    )
+    env_iv = {"x": Interval(-1.0, 1.0)}
+    iv = interval_evaluate(tree, env_iv)
+    # ||diff||_1 = 2, M_x = 1 → bound = 2 * 2 * 1 * 1 = 4
+    assert iv.lo == pytest.approx(-4.0)
+    assert iv.hi == pytest.approx(4.0)
+
+
+def test_interval_functional_bound_is_sound_empirically():
+    """For random data, the empirical max of |L(x)| must fall within
+    the interval bound."""
+    from tessera.expression import (
+        FunctionalOp, LinearFunctional, measure_ema, evaluate,
+    )
+    rng = np.random.default_rng(0)
+    n = 500
+    x = rng.standard_normal(n) * 2     # x roughly in [-6, 6] (3σ)
+    tree = FunctionalOp(LinearFunctional(measure=measure_ema(halflife=20)), (Var("x"),))
+    env_iv = env_intervals_from_arrays({"x": x})
+    iv = interval_evaluate(tree, env_iv)
+
+    # Actual evaluation
+    y = evaluate(tree, {"x": x})
+    finite = y[np.isfinite(y)]
+    # Empirical max must lie within [iv.lo, iv.hi]
+    assert iv.lo <= finite.min(), f"empirical {finite.min()} < bound lo {iv.lo}"
+    assert finite.max() <= iv.hi, f"empirical {finite.max()} > bound hi {iv.hi}"
 
 
 # ---------------- MSE lower bound ----------------

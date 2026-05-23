@@ -25,16 +25,22 @@ What's covered
 - Unary: neg, abs, tanh, sign, step → all monotone-or-bounded
 - Const, Var → exact (for Var, from env_intervals)
 
+What's covered for measure-theoretic operators
+-----------------------------------------------
+- LinearFunctional(μ)(x): |L(x)| ≤ ||μ||_1 · max(|x.lo|, |x.hi|)
+  where ||μ||_1 = ∑_k |κ[k]| is the L1 norm of the discrete kernel.
+- SeparableBilinear(μ_a, μ_b)(x, y): elementwise L_μ_a(x) * L_μ_b(y).
+  Interval-multiplied via the LinearFunctional bound for each side.
+- Volterra2(μ_a, μ_b)(x): same as SeparableBilinear with y = x.
+
 What's NOT covered (returns conservative [-inf, +inf])
 ------------------------------------------------------
-- FunctionalOp (LinearFunctional, SeparableBilinear, Volterra2) — could
-  be tightened later with measure-norm bounds, deferred for now
-- FunctionalOp2D — same
+- FunctionalOp2D — 2-D measures on space-time fields. Bound derivable
+  via 2-D L1 norm; deferred for the first pass.
 
-This means trees containing functionals get a loose bound and pruning
-is less effective. Pure pointwise trees see the full benefit. Future
-work: tighten functional bounds using the measure's L1 norm and the
-input bound.
+Pure pointwise + 1-D functional trees see the full benefit. Future
+work: 2-D measure L1 norms, AC-norm propagation through functionals
+to defeat the dependency problem (e.g., L_μ(x) - L_μ(x) ≡ 0).
 """
 from __future__ import annotations
 
@@ -46,6 +52,22 @@ import numpy as np
 from .tree import (
     Node, Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D,
 )
+from .functional import LinearFunctional, SeparableBilinear, Volterra2
+from .measure import Measure
+
+
+def measure_l1_norm(m: Measure) -> float:
+    """L1 norm = total variation of the discrete kernel.
+
+    For a measure with atomic + density parts:
+        ||μ||_1 = ∑_k |κ[k]|   where κ = m.to_kernel()
+
+    Exact (not an upper bound) under tessera's discrete-time semantics.
+    Used by interval evaluation of LinearFunctional / SeparableBilinear
+    / Volterra2.
+    """
+    kernel = m.to_kernel()
+    return float(np.sum(np.abs(kernel)))
 
 
 @dataclass(frozen=True)
@@ -267,12 +289,70 @@ def interval_evaluate(
             return Interval.unbounded()
         return fn(a, b)
 
-    if isinstance(node, (FunctionalOp, FunctionalOp2D)):
-        # TODO: tighten using the measure's L1-norm bound times the
-        # input interval's max-abs. For now, conservative.
+    if isinstance(node, FunctionalOp):
+        return _interval_functional(node, env_intervals)
+
+    if isinstance(node, FunctionalOp2D):
+        # 2-D measures: L1 norm on a 2-D kernel would tighten this,
+        # but the bound is more involved (output shape is 2-D, not 1-D).
+        # Deferred to a follow-up; return conservative ±∞ for now.
         return Interval.unbounded()
 
     raise TypeError(type(node))
+
+
+def _interval_functional(
+    node: FunctionalOp,
+    env_intervals: dict[str, Interval],
+) -> Interval:
+    """L1-norm-based interval bound for tessera's 1-D Functional types.
+
+    For LinearFunctional(μ) applied to x with x[t] ∈ [lo, hi]:
+        |L_μ(x)(t)| = |∑_k κ_μ[k] · x[t-k]|
+                   ≤ ∑_k |κ_μ[k]| · max(|lo|, |hi|)
+                   = ||μ||_1 · max(|lo|, |hi|)
+    So  L_μ(x) ∈ [-||μ||_1 · M, +||μ||_1 · M]  where M = max(|lo|, |hi|).
+
+    For SeparableBilinear(μ_a, μ_b)(x, y) = L_μ_a(x) · L_μ_b(y):
+        bound is the interval product of the two LinearFunctional bounds.
+
+    For Volterra2(μ_a, μ_b)(x): same as SeparableBilinear with y=x.
+    """
+    f = node.functional
+    if isinstance(f, LinearFunctional):
+        x_iv = interval_evaluate(node.args[0], env_intervals)
+        if not (math.isfinite(x_iv.lo) and math.isfinite(x_iv.hi)):
+            return Interval.unbounded()
+        L1 = measure_l1_norm(f.measure)
+        M = max(abs(x_iv.lo), abs(x_iv.hi))
+        return Interval(-L1 * M, L1 * M)
+
+    if isinstance(f, SeparableBilinear):
+        x_iv = interval_evaluate(node.args[0], env_intervals)
+        y_iv = interval_evaluate(node.args[1], env_intervals)
+        if not all(math.isfinite(v) for v in
+                   (x_iv.lo, x_iv.hi, y_iv.lo, y_iv.hi)):
+            return Interval.unbounded()
+        L1_a = measure_l1_norm(f.measure_a)
+        L1_b = measure_l1_norm(f.measure_b)
+        M_x = max(abs(x_iv.lo), abs(x_iv.hi))
+        M_y = max(abs(y_iv.lo), abs(y_iv.hi))
+        # |L_a(x) * L_b(y)| ≤ L1_a*M_x * L1_b*M_y
+        prod_bound = L1_a * M_x * L1_b * M_y
+        return Interval(-prod_bound, prod_bound)
+
+    if isinstance(f, Volterra2):
+        x_iv = interval_evaluate(node.args[0], env_intervals)
+        if not (math.isfinite(x_iv.lo) and math.isfinite(x_iv.hi)):
+            return Interval.unbounded()
+        L1_a = measure_l1_norm(f.measure_a)
+        L1_b = measure_l1_norm(f.measure_b)
+        M = max(abs(x_iv.lo), abs(x_iv.hi))
+        prod_bound = L1_a * L1_b * M * M
+        return Interval(-prod_bound, prod_bound)
+
+    # Unknown Functional subtype — conservative
+    return Interval.unbounded()
 
 
 def env_intervals_from_arrays(
