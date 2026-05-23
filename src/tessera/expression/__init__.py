@@ -36,6 +36,7 @@ from .tree import (
     Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D, Node,
     BIN_OPS, UN_OPS, BIN_OP_FNS, UN_OP_FNS,
     complexity, depth, used_features, iter_subtrees, replace_at, evaluate,
+    simplify,
 )
 from .mutation import (
     MAX_DEPTH, MAX_COMPLEXITY, MAX_CONST_MAGNITUDE,
@@ -69,6 +70,7 @@ __all__ = [
     "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "FunctionalOp2D", "Node",
     "BIN_OPS", "UN_OPS", "BIN_OP_FNS", "UN_OP_FNS",
     "complexity", "depth", "used_features", "iter_subtrees", "replace_at", "evaluate",
+    "simplify",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",

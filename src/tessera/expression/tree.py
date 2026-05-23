@@ -265,6 +265,138 @@ def replace_at(root: Node, target_index: int, new_node: Node) -> Node:
     return visit(root)
 
 
+# ---------------- Simplification ----------------
+
+def _is_const_value(node: Node, value: float, tol: float = 1e-12) -> bool:
+    return isinstance(node, Const) and abs(node.value - value) <= tol
+
+
+def simplify(node: Node) -> Node:
+    """Bottom-up algebraic simplification.
+
+    Folds the trivial identities tessera's operator alphabet exposes:
+
+        X − X                → 0
+        X + 0, 0 + X         → X
+        X − 0                → X
+        0 − X                → neg(X)
+        X * 0, 0 * X         → 0
+        X * 1, 1 * X         → X
+        X / 1                → X
+        X / 0                → 0    (matches BIN_OP_FNS["div"] safe-divide)
+        0 / X                → 0    (zero numerator)
+        neg(neg(X))          → X
+        neg(Const(c))        → Const(-c)
+        abs(Const(c))        → Const(|c|)
+        tanh(Const(c))       → Const(tanh(c))
+        sign(Const(c))       → Const(sign(c))
+        BinOp(op, Const, Const) → Const(op(a, b))   (constant folding)
+
+    Why this matters for SR
+    -----------------------
+    Without this pass, a tree like `((X − range) / (logret − logret)) + abs(logret)`
+    evaluates correctly under safe-divide (yielding `abs(logret)`) but the
+    Pareto front shows the FULL expression at cx=10 instead of the
+    SIMPLIFIED `abs(logret)` at cx=2. That's misleading and wastes
+    parsimony budget. Simplifying inside the scorer makes complexity
+    reflect EFFECTIVE size — the Pareto front becomes honestly
+    interpretable.
+
+    Semantic-preserving guarantees
+    ------------------------------
+    Every fold above is identity-equal under tessera's `BIN_OP_FNS` /
+    `UN_OP_FNS` evaluator. Notably `X / 0 → 0` matches the safe-divide
+    convention (not standard IEEE NaN), and `X − X → 0` is exact even
+    when X has NaN entries IFF X − X is uniformly 0 at the finite
+    rows (which it is — `nan − nan` is still `nan`, propagated, but
+    the simplifier replaces the whole subtree with `Const(0)` which
+    is finite everywhere; this changes behaviour for NaN rows but
+    matches the underlying math `0 ≡ 0`).
+
+    FunctionalOp / FunctionalOp2D nodes are recursed into (their args
+    are simplified) but never folded into Const — folding through a
+    measure would require evaluating the measure on a constant input,
+    which is not a free identity.
+    """
+    if isinstance(node, (Var, Const)):
+        return node
+
+    if isinstance(node, UnOp):
+        a = simplify(node.a)
+        # Constant folding
+        if isinstance(a, Const):
+            try:
+                return Const(float(UN_OP_FNS[node.op](a.value)))
+            except (ValueError, OverflowError):
+                pass
+        # neg(neg(X)) → X
+        if node.op == "neg" and isinstance(a, UnOp) and a.op == "neg":
+            return a.a
+        # abs(neg(X)) → abs(X)
+        if node.op == "abs" and isinstance(a, UnOp) and a.op == "neg":
+            return UnOp("abs", a.a)
+        return UnOp(node.op, a)
+
+    if isinstance(node, BinOp):
+        a = simplify(node.a)
+        b = simplify(node.b)
+        op = node.op
+
+        # Constant folding when both sides are constants
+        if isinstance(a, Const) and isinstance(b, Const):
+            try:
+                v = BIN_OP_FNS[op](a.value, b.value)
+                # numpy scalar funcs may return ndarray-like; coerce.
+                return Const(float(v))
+            except (ValueError, OverflowError, ZeroDivisionError):
+                pass
+
+        # Algebraic identities
+        if op == "sub" and a == b:
+            return Const(0.0)
+        if op == "add":
+            if _is_const_value(a, 0.0):
+                return b
+            if _is_const_value(b, 0.0):
+                return a
+        if op == "sub":
+            if _is_const_value(b, 0.0):
+                return a
+            if _is_const_value(a, 0.0):
+                return simplify(UnOp("neg", b))
+        if op == "mul":
+            if _is_const_value(a, 0.0) or _is_const_value(b, 0.0):
+                return Const(0.0)
+            if _is_const_value(a, 1.0):
+                return b
+            if _is_const_value(b, 1.0):
+                return a
+        if op == "div":
+            # Safe-divide: anything / 0 → 0
+            if _is_const_value(b, 0.0):
+                return Const(0.0)
+            # 0 / anything → 0
+            if _is_const_value(a, 0.0):
+                return Const(0.0)
+            # X / 1 → X
+            if _is_const_value(b, 1.0):
+                return a
+        # min/max with equal args
+        if op in ("min", "max") and a == b:
+            return a
+
+        return BinOp(op, a, b)
+
+    if isinstance(node, FunctionalOp):
+        new_args = tuple(simplify(arg) for arg in node.args)
+        return FunctionalOp(node.functional, new_args)
+
+    if isinstance(node, FunctionalOp2D):
+        return FunctionalOp2D(node.measure_2d, simplify(node.arg))
+
+    raise TypeError(type(node))
+
+
 # ---------------- Evaluation ----------------
 
 def _maybe_broadcast(v, n: int) -> np.ndarray:

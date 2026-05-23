@@ -47,7 +47,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from .cache import FunctionalCache
-from .tree import Node, complexity, depth, evaluate, used_features
+from .tree import Node, complexity, depth, evaluate, used_features, simplify
 from .mutation import (
     MAX_COMPLEXITY, MAX_DEPTH, OP_WEIGHTS,
     mutate, random_tree, validate_tree,
@@ -113,6 +113,17 @@ class GPConfig:
     `lambda` or factory-returned closures fail to pickle under the default
     spawn start method and will raise at pool start. Use n_workers=1 if your
     loss_fn isn't picklable.
+    """
+
+    # Algebraic simplification
+    simplify_trees: bool = True
+    """If True (default), each scored tree is passed through `simplify()`
+    before evaluation. Folds X-X→0, X*0→0, X/0→0 (safe-divide), constant
+    arithmetic, double-neg, etc. Result: the Pareto front shows
+    EFFECTIVE complexity rather than nominal node count, and trees that
+    evaluate to a constant via safe-divide pathologies don't masquerade
+    as larger expressions. Disable only if you're benchmarking the raw
+    evolutionary search and want pre-simplification trees on the front.
     """
 
     # NaN robustness
@@ -254,6 +265,7 @@ _WORKER_FILL_WARMUP: float = 0.0
 _WORKER_PARSIMONY: float = 0.005
 _WORKER_LOSS_FN: Callable[[np.ndarray, np.ndarray], float] = mse_loss
 _WORKER_MIN_VALID_FRAC: float = 0.9
+_WORKER_SIMPLIFY: bool = True
 
 
 def _init_worker(
@@ -264,6 +276,7 @@ def _init_worker(
     parsimony: float,
     loss_fn: Callable[[np.ndarray, np.ndarray], float],
     min_valid_frac: float,
+    simplify_trees: bool,
 ) -> None:
     """Run once per worker on pool startup. Pickles env+y+loss_fn across
     just once rather than per-task. The loss_fn must be picklable (a
@@ -271,7 +284,7 @@ def _init_worker(
     or factory closures will fail under spawn-based pool start."""
     global _WORKER_ENV, _WORKER_Y, _WORKER_CACHE
     global _WORKER_FILL_WARMUP, _WORKER_PARSIMONY
-    global _WORKER_LOSS_FN, _WORKER_MIN_VALID_FRAC
+    global _WORKER_LOSS_FN, _WORKER_MIN_VALID_FRAC, _WORKER_SIMPLIFY
     _WORKER_ENV = env
     _WORKER_Y = y_true
     _WORKER_CACHE = FunctionalCache(mem_size=cache_mem_size)
@@ -279,12 +292,15 @@ def _init_worker(
     _WORKER_PARSIMONY = parsimony
     _WORKER_LOSS_FN = loss_fn
     _WORKER_MIN_VALID_FRAC = min_valid_frac
+    _WORKER_SIMPLIFY = simplify_trees
 
 
 def _score_in_worker(tree_and_gen: tuple[Node, int]) -> Candidate:
     """Score a candidate inside the worker process. Returns a fully-formed
     Candidate."""
     tree, born_gen = tree_and_gen
+    if _WORKER_SIMPLIFY:
+        tree = simplify(tree)
     cx = complexity(tree)
     loss = _evaluate_tree(
         tree, _WORKER_ENV, _WORKER_Y, _WORKER_CACHE,
@@ -347,7 +363,8 @@ class GP:
                 initializer=_init_worker,
                 initargs=(env, y_true, self.cfg.cache_mem_size,
                           self.cfg.fill_warmup, self.cfg.parsimony,
-                          self.loss_fn, self.cfg.min_valid_frac),
+                          self.loss_fn, self.cfg.min_valid_frac,
+                          self.cfg.simplify_trees),
             )
 
         # Initialise population
@@ -430,6 +447,8 @@ class GP:
         y_true: np.ndarray,
         born_gen: int,
     ) -> Candidate:
+        if self.cfg.simplify_trees:
+            tree = simplify(tree)
         cx = complexity(tree)
         loss = _evaluate_tree(
             tree, env, y_true, self.cache,
