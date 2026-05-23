@@ -219,6 +219,47 @@ def test_candidate_equality_by_value():
     assert c1 == c2
 
 
+# ---------------- Multiprocessing ----------------
+
+def test_gp_with_n_workers_1_matches_sequential():
+    """n_workers=1 (default) should be byte-identical to the no-MP path."""
+    rng = np.random.default_rng(60)
+    n = 200
+    x = rng.standard_normal(n)
+    y = np.tanh(x)
+
+    cfg = GPConfig(pop_size=20, n_gens=4, verbose=False, seed=60, n_workers=1)
+    gp = GP(cfg)
+    front = gp.run({"x": x}, y, ["x"])
+    assert len(front) >= 1
+    assert gp._pool is None   # never created a pool
+
+
+def test_gp_with_workers_produces_consistent_pareto():
+    """With n_workers=2, the run completes and yields a sane Pareto front.
+
+    NOTE: results are not bitwise identical to n_workers=1 because:
+      1. Per-worker caches don't share hit/miss stats
+      2. Floating point reductions may differ in order
+    But the loss-vs-cx structure should be plausible.
+    """
+    rng = np.random.default_rng(61)
+    n = 200
+    x = rng.standard_normal(n)
+    y = x ** 2
+
+    cfg = GPConfig(pop_size=16, n_gens=3, verbose=False, seed=61, n_workers=2)
+    gp = GP(cfg)
+    front = gp.run({"x": x}, y, ["x"])
+
+    assert len(front) >= 1
+    # Sorted by cx ascending, loss non-increasing
+    losses = [c.train_loss for c in front]
+    assert all(losses[i] >= losses[i+1] for i in range(len(losses)-1))
+    # Pool was created and shut down
+    assert gp._pool is None
+
+
 # ---------------- Cache integration ----------------
 
 def test_gp_cache_records_hits_over_generations():

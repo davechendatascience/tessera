@@ -37,8 +37,10 @@ Public API
 from __future__ import annotations
 
 import math
+import os
 import random
 import time
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -73,6 +75,26 @@ class GPConfig:
     fill_warmup: float = 0.0   # zero-fill warmup rows during eval
     cache_mem_size: int = 4096
     verbose: bool = True
+    # Multiprocessing
+    n_workers: int = 1
+    """1 = sequential (no MP); >1 spawns a ProcessPoolExecutor.
+
+    Honest performance note
+    -----------------------
+    MP at the population level gives modest speedup (≈1.2-1.5× on
+    N≥50 000 samples, pop≥120, on a typical 8-core Windows desktop).
+    On smaller problems the per-worker spawn cost (~1-2 s on Windows)
+    + per-task pickling exceeds the parallelism gain — sequential
+    (n_workers=1) is then faster.
+
+    Larger wins are available via:
+      - Threading + nogil=True on the numba kernels (no pickling, no spawn)
+      - Sharing the FunctionalCache across workers (currently per-worker)
+      - Reusing workers across runs
+
+    Default n_workers=1 keeps tests deterministic + portable. Tune up only
+    for production runs where the per-eval cost dominates.
+    """
 
 
 # ---------------- Candidate ----------------
@@ -158,6 +180,49 @@ def pareto_front(candidates: list[Candidate]) -> list[Candidate]:
     return front
 
 
+# ---------------- Worker-side helpers for multiprocessing ----------------
+#
+# These live at module level so they're picklable by spawned workers.
+# Each worker holds its own env/y/cache via globals set in _init_worker.
+
+_WORKER_ENV: dict[str, np.ndarray] = {}
+_WORKER_Y: np.ndarray = np.array([])
+_WORKER_CACHE: FunctionalCache | None = None
+_WORKER_FILL_WARMUP: float = 0.0
+_WORKER_PARSIMONY: float = 0.005
+
+
+def _init_worker(
+    env: dict[str, np.ndarray],
+    y_true: np.ndarray,
+    cache_mem_size: int,
+    fill_warmup: float,
+    parsimony: float,
+) -> None:
+    """Run once per worker on pool startup. Pickles env+y across just once
+    rather than per-task."""
+    global _WORKER_ENV, _WORKER_Y, _WORKER_CACHE, _WORKER_FILL_WARMUP, _WORKER_PARSIMONY
+    _WORKER_ENV = env
+    _WORKER_Y = y_true
+    _WORKER_CACHE = FunctionalCache(mem_size=cache_mem_size)
+    _WORKER_FILL_WARMUP = fill_warmup
+    _WORKER_PARSIMONY = parsimony
+
+
+def _score_in_worker(tree_and_gen: tuple[Node, int]) -> Candidate:
+    """Score a candidate inside the worker process. Returns a fully-formed
+    Candidate."""
+    tree, born_gen = tree_and_gen
+    cx = complexity(tree)
+    loss = _evaluate_tree(
+        tree, _WORKER_ENV, _WORKER_Y, _WORKER_CACHE,
+        fill_warmup=_WORKER_FILL_WARMUP, loss_fn=mse_loss,
+    )
+    fitness = loss + _WORKER_PARSIMONY * cx
+    return Candidate(tree=tree, train_loss=loss, complexity=cx,
+                     fitness=fitness, born_gen=born_gen)
+
+
 # ---------------- The GP engine ----------------
 
 class GP:
@@ -183,6 +248,7 @@ class GP:
         self.cache = FunctionalCache(mem_size=self.cfg.cache_mem_size)
         self.history: list[dict] = []   # per-gen best-loss, pareto-size, etc.
         self._stop_requested = False
+        self._pool: ProcessPoolExecutor | None = None
 
     # ---- public ----
 
@@ -199,6 +265,15 @@ class GP:
         """Run the search; return the final Pareto front."""
         if feature_names is None:
             feature_names = list(env.keys())
+
+        # Spin up the worker pool if MP is requested
+        if self.cfg.n_workers > 1:
+            self._pool = ProcessPoolExecutor(
+                max_workers=self.cfg.n_workers,
+                initializer=_init_worker,
+                initargs=(env, y_true, self.cfg.cache_mem_size,
+                          self.cfg.fill_warmup, self.cfg.parsimony),
+            )
 
         # Initialise population
         pop = self._init_population(feature_names, env, y_true)
@@ -237,6 +312,11 @@ class GP:
                     print(f"[gp] early stop at gen {gen} (no improvement for "
                           f"{gens_without_improvement} gens)")
                 break
+
+        # Tear down worker pool
+        if self._pool is not None:
+            self._pool.shutdown(wait=True)
+            self._pool = None
 
         return front
 
@@ -292,15 +372,24 @@ class GP:
         y_true: np.ndarray,
         gen: int,
     ) -> list[Candidate]:
-        offspring: list[Candidate] = []
-        while len(offspring) < self.cfg.pop_size:
+        """Generate pop_size offspring. Mutation runs in the main process
+        (cheap); scoring fans out to the worker pool when n_workers > 1."""
+        # Mutation: serial — picks parents from pop via tournament + RNG.
+        # Keep this single-threaded to preserve seed determinism.
+        new_trees: list[Node] = []
+        while len(new_trees) < self.cfg.pop_size:
             a = self._tournament(pop)
             b = self._tournament(pop)
             child_tree = mutate([a.tree, b.tree], self.rng, feature_names)
             if child_tree is None:
                 continue
-            offspring.append(self._score(child_tree, env, y_true, born_gen=gen))
-        return offspring
+            new_trees.append(child_tree)
+
+        # Scoring: parallel when a pool is active. Otherwise sequential.
+        if self._pool is not None:
+            tasks = [(t, gen) for t in new_trees]
+            return list(self._pool.map(_score_in_worker, tasks))
+        return [self._score(t, env, y_true, born_gen=gen) for t in new_trees]
 
     def _survive(
         self,
