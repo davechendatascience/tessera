@@ -7,6 +7,54 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`tessera.expression.simplify` subpackage** — promoted the simplifier
+  to its own submodule so multiple simplification strategies can grow
+  as siblings:
+  - `simplify` (rule-based folds; moved from `tree.py`)
+  - `simplify_ac` — Associative-Commutative normalisation. Flattens
+    nested `add`/`mul`/`min`/`max` chains, sorts children by
+    `(complexity, str)`, rebuilds left-leaning. Result: `a + b` ≡
+    `b + a`, `(a+b)+c` ≡ `a+(b+c)` ≡ `(c+b)+a` (canonical form).
+    Per the perplexity research note (docs/research_notes/
+    search_as_energy_min.md), parsimony was "distorted by arbitrary
+    syntactic differences" without this; AC norm gives parsimony a
+    fair semantic-equivalence-class basis.
+  - `simplify_canonical = simplify ∘ simplify_ac` — recommended SR
+    default. AC norm first so constants cluster, then rules fold
+    them: `2 + x + 3 → 5 + x` in one canonical pass. Wired into
+    GP / SA / RandomSearch as the default when `simplify_trees=True`.
+- **`tessera.expression.interval`** — sound interval-arithmetic
+  evaluation of Expr trees. Each pointwise op (`add`, `sub`, `mul`,
+  `div`, `min`, `max`, `gt`/`lt`/`ge`/`le`, `neg`, `abs`, `tanh`,
+  `sign`, `step`) has a closed-form interval semantics; tight bounds
+  where possible (e.g. `gt(a, b)` is exactly 1 when `a.lo > b.hi`).
+  `FunctionalOp` / `FunctionalOp2D` get conservative ±∞ (future:
+  tighten via measure L1-norm bound). Used by the search submodule's
+  lower-bound pruning.
+- **`tessera.search.bounds`** — branch-and-bound infrastructure:
+  - `mse_lower_bound(pred_lo, pred_hi, y_true)` — tight closed-form
+    MSE lower bound: per-sample optimal pred is `clip(y_true,
+    pred_lo, pred_hi)`; bound is mean squared distance to the clip.
+  - `pareto_threshold(front, cx)` — loss a new candidate at
+    complexity cx must beat to be Pareto-relevant.
+- **`GPConfig.prune_by_lower_bound`** — opt-in branch-and-bound pruning
+  in GP. When enabled (with `mse_loss` + `n_workers=1`), `_score()`
+  computes the interval bound before full evaluation and skips
+  candidates whose MSE lower bound exceeds the Pareto threshold.
+  `GP.prune_stats` reports `n_pruned` / `n_evaluated`. Direct
+  operationalisation of the "SR-for-fit as energy minimisation with
+  full data information" framing (docs/research_notes/
+  search_as_energy_min.md, validated by perplexity research as a
+  "significant research opportunity").
+- **`docs/research_notes/fit_as_perfect_info_game.md`** — independent
+  research framework: SR-for-fit as a single-agent perfect-information
+  game in the Knuth tradition. Develops the chess-game analogy from
+  the user's 2026-05-24 session into a formal framework grounded in
+  TAOCP Vol 4 combinatorial algorithms (backtracking, branch-and-bound,
+  dancing links, BDD/ZDD). States open theoretical questions and
+  connects to tessera's experiments. Future research base, not
+  immediate implementation.
+
 - **`tessera.search` submodule** — extracts the search machinery from
   `tessera.expression.gp` into a dedicated submodule with a shared
   `Candidate` type, `pareto_front`, `mse_loss`, `_evaluate_tree`, and
