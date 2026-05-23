@@ -7,6 +7,16 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`tessera.koopman.LatentKoopman`** — Closed-form latent Koopman
+  with time-delay embedding. Five-step identification:
+  reduced-rank ridge OLS of one-step prediction operator β → SVD
+  truncation → encoder E = V_k^T → latent OLS for K → OLS for
+  decoder D. Single-matmul forecast at test time (`D · K^{h-1} · E ·
+  past`). Separate from N4SID by having distinct E/K/D maps rather
+  than tying via shared C. Supports `target_mode="delta"` for
+  non-stationary / trending series with a per-coordinate
+  mean-delta correction so constant slope is representable. 13
+  tests in `tests/koopman/`. See [`docs/koopman.md`](docs/koopman.md).
 - **`tessera.expression.tree`** — Five Node types (Var, Const, BinOp,
   UnOp, FunctionalOp) as frozen tagged-union dataclasses. Pointwise op
   tables (add/sub/mul/div/min/max, tanh/abs/sign/neg). Structural

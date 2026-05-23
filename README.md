@@ -27,7 +27,7 @@ discovery, time-series modeling, PDE identification, and more.
 | Module | Status | Purpose |
 |---|---|---|
 | [`tessera.expression`](src/tessera/expression/README.md) | shipping (v0.1) | Symbolic operators + measure-theoretic kernels + GP search |
-| `tessera.koopman` | planned | Latent-state recovery via Koopman EVD |
+| [`tessera.koopman`](src/tessera/koopman/README.md) | shipping (v0.1.1) | Explicit-latent Koopman with time-delay embedding |
 | `tessera.ssm` | planned | Kalman / state-space filtering |
 | `tessera.mts` | planned | Multi-timescale analysis |
 | `tessera.diff_eml` | planned | Differentiable feature engineering |
@@ -79,11 +79,16 @@ y = apply_with_cache(bil, cache, var_ids=("x", "x"), xs=(x, x))
 
 ## Status
 
+- **v0.1.1** — `tessera.koopman` adds `LatentKoopman` (closed-form
+  identification, time-delay embedding, separate E/K/D maps,
+  optional delta-target mode for trending series).
+  See [`src/tessera/koopman/README.md`](src/tessera/koopman/README.md).
 - **v0.1** — `tessera.expression` ships with `Measure`, `Functional`,
   `FunctionalCache`, Numba-JIT kernels, Expr `tree`, `mutation`
   operators, and a population-based `GP` search loop.
-  **117/117 tests passing.**  See [`src/tessera/expression/README.md`](src/tessera/expression/README.md).
-- Next: port the koopman / ssm / mts / diff_eml modules under the same
+  See [`src/tessera/expression/README.md`](src/tessera/expression/README.md).
+- **All tests passing**: 156/156 (143 expression + 13 koopman).
+- Next: port the ssm / mts / diff_eml modules under the same
   packaging.
 
 ## License
