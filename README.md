@@ -27,7 +27,7 @@ discovery, time-series modeling, PDE identification, and more.
 | Module | Status | Purpose |
 |---|---|---|
 | [`tessera.expression`](src/tessera/expression/README.md) | shipping (v0.1) | Symbolic operators + measure-theoretic kernels + GP search |
-| `tessera.koopman` | planned (port from market-analysis) | Latent-state recovery via Koopman EVD |
+| `tessera.koopman` | planned | Latent-state recovery via Koopman EVD |
 | `tessera.ssm` | planned | Kalman / state-space filtering |
 | `tessera.mts` | planned | Multi-timescale analysis |
 | `tessera.diff_eml` | planned | Differentiable feature engineering |
@@ -40,8 +40,7 @@ pip install -e .[dev]        # + pytest, ruff, mypy
 pip install -e .[all]        # + sympy, pysr (optional)
 ```
 
-After this, both `market-analysis` and `symbolic-chess` (or any other project)
-can simply `import tessera`.
+After this, any consuming project can simply `import tessera`.
 
 ## Usage example (expression module)
 
@@ -84,8 +83,8 @@ y = apply_with_cache(bil, cache, var_ids=("x", "x"), xs=(x, x))
   `FunctionalCache`, Numba-JIT kernels, Expr `tree`, `mutation`
   operators, and a population-based `GP` search loop.
   **117/117 tests passing.**  See [`src/tessera/expression/README.md`](src/tessera/expression/README.md).
-- Next: port the koopman / ssm / mts / diff_eml modules from
-  market-analysis under the same packaging.
+- Next: port the koopman / ssm / mts / diff_eml modules under the same
+  packaging.
 
 ## License
 

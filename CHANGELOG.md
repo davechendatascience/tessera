@@ -86,10 +86,10 @@ References to Reznikov's *Lecture Notes for Measure Theory* (MAA-5616, FSU
   fast paths.
 
 ### Notes on extraction
-Modules originally developed in [market-analysis](https://github.com/davechendatascience/market-analysis)
-under `src/lib/expression_layer/`. Extracted on 2026-05-24 to support
-sharing with other downstream projects (symbolic-chess, future weather /
-trading / PDE workbenches). Original commits preserved at:
+Modules originally developed in a private research repo under
+`src/lib/expression_layer/`. Extracted on 2026-05-24 to support sharing
+across downstream projects (symbolic-chess, weather / PDE workbenches).
+Original commits preserved at:
 - `2b6080a` — Measure abstraction
 - `2868da6` — Numba JIT kernels
 - `fc10840` — FunctionalCache
