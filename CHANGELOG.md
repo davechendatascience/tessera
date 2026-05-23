@@ -7,6 +7,33 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`docs/research_notes/measure_theory_and_perfect_info.md`** —
+  theoretical companion to `fit_as_perfect_info_game.md`. Develops
+  the argument that tessera's measure-theoretic operator algebra
+  ADDS three things to the perfect-information framework: (1) a
+  richer canonical-form structure via Lebesgue decomposition; (2)
+  closed-form lower bounds via L1 norms; (3) tractable bilinear
+  factorisation via Fubini. Grounded empirically in the
+  step (a)/(b)/(c) benchmark results.
+- **Empirical research benchmarks (steps a/b/c)**:
+  - `benchmarks/run_equivalence_class_count.py` — enumerates all
+    valid trees up to depth 3 with restricted pointwise grammar;
+    computes |E_K| / |T_K| ratio under `simplify_canonical`.
+    Result: ratio drops monotonically to 7.7% at cx=7
+    (~92% of syntactic trees are equivalence-class duplicates).
+  - `benchmarks/run_interval_bound_tightness.py` — samples 2000
+    random trees on 3 workloads; reports tightness ratio
+    (bound / actual_loss) distribution. Pre-step-(c): median 0.14
+    on synthetic_xx, 47% trees unbounded.
+  - L1-norm interval bounds (step c) on `LinearFunctional`,
+    `SeparableBilinear`, `Volterra2`: extends
+    `tessera.expression.interval` with
+    `measure_l1_norm(m) = ∑|kernel|` and L1-bound-based interval
+    semantics. Re-running tightness benchmark: median ratio
+    0.14 → 0.47 on synthetic_xx (3.4× tighter); unbounded
+    fraction 47% → 19%.
+
+### Added
 - **`tessera.expression.simplify` subpackage** — promoted the simplifier
   to its own submodule so multiple simplification strategies can grow
   as siblings:
