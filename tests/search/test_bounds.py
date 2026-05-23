@@ -104,14 +104,34 @@ def test_interval_functional_linear_bounded():
     assert iv.hi == pytest.approx(1.0)
 
 
-def test_interval_functional_2d_unbounded():
-    """FunctionalOp2D still conservative ±inf (future tightening)."""
-    from tessera.expression import (
-        FunctionalOp2D, measure_2d_diff_t,
-    )
+def test_interval_functional_2d_bounded():
+    """FunctionalOp2D now gets an L1-norm bound (step c follow-up)."""
+    from tessera.expression import FunctionalOp2D, measure_2d_diff_t
+    # measure_2d_diff_t(1): atoms (1·δ(0,0), -1·δ(1,0)) → ||·||_1 = 2
     tree = FunctionalOp2D(measure_2d_diff_t(lag_t=1), Var("x"))
-    iv = interval_evaluate(tree, {"x": Interval(0.0, 1.0)})
-    assert iv.lo == -float("inf") or iv.hi == float("inf")
+    iv = interval_evaluate(tree, {"x": Interval(-1.0, 1.0)})
+    # ||m||_1 = 2, M = 1 → bound = 2
+    assert iv.lo == pytest.approx(-2.0)
+    assert iv.hi == pytest.approx(2.0)
+
+
+def test_measure_2d_l1_norm():
+    """2D L1 norm: atomic + (sep_t_l1 * sep_x_l1)."""
+    from tessera.expression import (
+        measure_2d_diff_t, measure_2d_laplacian_5pt, measure_2d_separable,
+        measure_ema, measure_signed_sum,
+    )
+    from tessera.expression.interval import measure_2d_l1_norm
+    # diff_t: 2 atoms (+1, -1) → L1 = 2
+    assert measure_2d_l1_norm(measure_2d_diff_t(1)) == pytest.approx(2.0)
+    # measure_2d_laplacian_5pt: x-direction part only (1, -2, 1) → L1 = 4
+    assert measure_2d_l1_norm(measure_2d_laplacian_5pt()) == pytest.approx(4.0)
+    # Separable density: ||sep_t||_1 * ||sep_x||_1
+    sep = measure_2d_separable(measure_t=measure_ema(halflife=5),
+                                measure_x=measure_ema(halflife=5))
+    l1 = measure_2d_l1_norm(sep)
+    # Each 1D ema has L1 ~ 1; product is ~ 1
+    assert 0.9 < l1 < 1.05
 
 
 def test_measure_l1_norm():

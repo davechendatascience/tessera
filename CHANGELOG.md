@@ -7,6 +7,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **FunctionalOp2D L1-norm interval bound** —
+  `tessera.expression.interval.measure_2d_l1_norm` decomposes a
+  Measure2D into atomic + separable-density parts and returns
+  `Σ|atoms| + ||sep_t||_1 · ||sep_x||_1` (Fubini factorisation of
+  the product kernel). `interval_evaluate` now bounds FunctionalOp2D
+  output by `±||μ_2d||_1 · max(|x.lo|, |x.hi|)`. Closes the last
+  conservative-±∞ case in the interval evaluator. Tests:
+  test_interval_functional_2d_bounded + test_measure_2d_l1_norm.
+- **`docs/research_notes/gpu_and_cv_via_sr.md`** — honest scoping
+  document for "tessera → GPU → CV via SR-evolved architectures."
+  Three-stage path (GPU backend → CV benchmarks → SR-as-NAS),
+  realistic timelines (1-2 months / 1-2 / 2-3), with section 10
+  specifically answering "does Knuth's framework work on GPU?" —
+  yes with batched eval, equivalence-class collapse becomes more
+  central than branch-and-bound pruning when GPU is available.
 - **`docs/research_notes/measure_theory_and_perfect_info.md`** —
   theoretical companion to `fit_as_perfect_info_game.md`. Develops
   the argument that tessera's measure-theoretic operator algebra

@@ -70,6 +70,25 @@ def measure_l1_norm(m: Measure) -> float:
     return float(np.sum(np.abs(kernel)))
 
 
+def measure_2d_l1_norm(m_2d) -> float:
+    """L1 norm of a 2D measure (Measure2D).
+
+    Decomposition:
+        ||μ||_1 = Σ_i |w_i|             (atomic part)
+                + ||κ_t||_1 · ||κ_x||_1  (separable density part)
+
+    The product structure for the density comes from Fubini's
+    theorem: for a separable kernel κ(s_t, s_x) = κ_t(s_t) · κ_x(s_x),
+    the double sum factors. (Reznikov §3.7, Theorem 143.)
+    """
+    atomic_l1 = sum(abs(a.weight) for a in m_2d.atoms)
+    if m_2d.has_density:
+        density_l1 = measure_l1_norm(m_2d.sep_t) * measure_l1_norm(m_2d.sep_x)
+    else:
+        density_l1 = 0.0
+    return float(atomic_l1 + density_l1)
+
+
 @dataclass(frozen=True)
 class Interval:
     """Closed interval [lo, hi]. Both endpoints are float; lo <= hi
@@ -293,10 +312,12 @@ def interval_evaluate(
         return _interval_functional(node, env_intervals)
 
     if isinstance(node, FunctionalOp2D):
-        # 2-D measures: L1 norm on a 2-D kernel would tighten this,
-        # but the bound is more involved (output shape is 2-D, not 1-D).
-        # Deferred to a follow-up; return conservative ±∞ for now.
-        return Interval.unbounded()
+        arg_iv = interval_evaluate(node.arg, env_intervals)
+        if not (math.isfinite(arg_iv.lo) and math.isfinite(arg_iv.hi)):
+            return Interval.unbounded()
+        L1 = measure_2d_l1_norm(node.measure_2d)
+        M = max(abs(arg_iv.lo), abs(arg_iv.hi))
+        return Interval(-L1 * M, L1 * M)
 
     raise TypeError(type(node))
 
