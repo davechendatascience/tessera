@@ -255,6 +255,20 @@ class Measure:
                 raise ValueError(
                     f"atom lag {atom.lag} exceeds support_max {self.support_max}"
                 )
+        # Canonicalise the atoms tuple at construction so two semantically
+        # identical Measures hash equal. Required for the FunctionalCache
+        # to recognise mathematically-equivalent measures across mutations
+        # (per docs/research_notes/measure_theory_and_perfect_info.md §3.1
+        # on Lebesgue decomposition uniqueness).
+        #
+        # Three operations:
+        #   1. Merge atoms with the same lag (sum their weights)
+        #   2. Drop atoms with effectively-zero weight (|w| < 1e-12)
+        #   3. Sort the survivors by lag ascending (canonical order)
+        canonical = self._canonicalise_atoms(self.atoms)
+        if canonical != self.atoms:
+            # Frozen dataclass: must use object.__setattr__ to mutate.
+            object.__setattr__(self, "atoms", canonical)
         if self.density_family is not None:
             if self.density_family not in DENSITY_FAMILIES:
                 raise ValueError(
@@ -273,6 +287,37 @@ class Measure:
                     f"density family {self.density_family!r} failed validation with "
                     f"params {dict(self.density_params)}: {e}"
                 ) from e
+
+    # ---- Canonicalisation ----
+
+    @staticmethod
+    def _canonicalise_atoms(
+        atoms: tuple[Atom, ...],
+        zero_tol: float = 1e-12,
+    ) -> tuple[Atom, ...]:
+        """Canonical form of an atoms tuple: merge by lag, drop zeros, sort.
+
+        Pure function on the tuple — no `self` access — so it's safe to
+        call from `__post_init__` before the dataclass is fully built.
+
+        Steps:
+          1. Group atoms by `lag`; sum the weights within each group.
+          2. Drop groups whose summed weight is |w| < zero_tol.
+          3. Sort the surviving (weight, lag) pairs by lag ascending.
+
+        Returns a NEW tuple; does not mutate the input.
+        """
+        if not atoms:
+            return ()
+        merged: dict[int, float] = {}
+        for a in atoms:
+            merged[a.lag] = merged.get(a.lag, 0.0) + a.weight
+        # Drop near-zero weights, sort by lag
+        out = sorted(
+            ((w, lag) for lag, w in merged.items() if abs(w) >= zero_tol),
+            key=lambda wl: wl[1],
+        )
+        return tuple(Atom(weight=w, lag=lag) for w, lag in out)
 
     # ---- Inspection ----
 

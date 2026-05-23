@@ -6,6 +6,20 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Measure canonicalisation at construction** — `Measure.__post_init__`
+  now sorts atoms by lag, merges duplicates (summing weights), and
+  drops near-zero atoms. Two semantically identical measures
+  constructed in different atom orders now compare equal and have
+  the same hash. Translates `docs/research_notes/measure_theory_and_perfect_info.md`
+  §3.1 (Lebesgue decomposition uniqueness) into the actual `Measure`
+  type. Downstream effect: FunctionalCache hits on
+  mathematically-equivalent measures across mutations, search
+  population dedup works on canonical measures. Backwards-compatible
+  for all existing call sites; tests `test_measure_canonical.py`
+  cover construction order, merging, zero-dropping, density
+  preservation, and the cache-hit benefit.
+
 ### Added
 - **FunctionalOp2D L1-norm interval bound** —
   `tessera.expression.interval.measure_2d_l1_norm` decomposes a
