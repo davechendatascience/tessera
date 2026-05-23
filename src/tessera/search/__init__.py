@@ -36,6 +36,7 @@ from .losses import mse_loss, _prediction_is_valid
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
 from .const_opt import optimize_constants
+from .hall_of_fame import HallOfFame
 from .gp import GP, GPConfig
 from .sa import SimulatedAnnealing, SAConfig
 from .random_search import RandomSearch, RSConfig
@@ -45,6 +46,7 @@ __all__ = [
     "Candidate",
     "mse_loss", "_prediction_is_valid", "_evaluate_tree",
     "pareto_front", "optimize_constants",
+    "HallOfFame",
     # Searchers
     "GP", "GPConfig",
     "SimulatedAnnealing", "SAConfig",

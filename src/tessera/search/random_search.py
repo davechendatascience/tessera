@@ -32,6 +32,7 @@ from .base import Candidate
 from .losses import mse_loss
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
+from .hall_of_fame import HallOfFame
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class RandomSearch:
         self.rng = random.Random(self.cfg.seed)
         self.cache = FunctionalCache(mem_size=self.cfg.cache_mem_size)
         self.history: list[dict] = []
+        self.hall_of_fame = HallOfFame()
 
     def run(
         self,
@@ -101,10 +103,12 @@ class RandomSearch:
                 min_valid_frac=self.cfg.min_valid_frac,
             )
             fitness = loss + self.cfg.parsimony * cx
-            candidates.append(Candidate(
+            cand = Candidate(
                 tree=tree, train_loss=loss, complexity=cx,
                 fitness=fitness, born_gen=len(candidates),
-            ))
+            )
+            candidates.append(cand)
+            self.hall_of_fame.update(cand)
 
             if self.cfg.verbose and len(candidates) % log_every == 0:
                 best = min(candidates, key=lambda c: c.fitness)
@@ -112,7 +116,7 @@ class RandomSearch:
                       f"best loss={best.train_loss:.4g} cx={best.complexity}")
 
         elapsed = time.time() - t0
-        front = pareto_front(candidates)
+        front = self.hall_of_fame.pareto_front()
         self.history.append(dict(
             n_trees=len(candidates), n_attempts=attempts,
             pareto_size=len(front), elapsed=elapsed,

@@ -48,6 +48,7 @@ from .losses import mse_loss
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
 from .const_opt import optimize_constants
+from .hall_of_fame import HallOfFame
 
 
 @dataclass(frozen=True)
@@ -125,6 +126,7 @@ class SimulatedAnnealing:
         self.rng = random.Random(self.cfg.seed)
         self.cache = FunctionalCache(mem_size=self.cfg.cache_mem_size)
         self.history: list[dict] = []
+        self.hall_of_fame = HallOfFame()
         self._stop_requested = False
 
     def stop(self) -> None:
@@ -146,8 +148,12 @@ class SimulatedAnnealing:
                 break
             chain_trace = self._run_chain(restart, feature_names, env, y_true)
             all_visited.extend(chain_trace)
+            # Every visited candidate (accepted OR rejected proposal) is
+            # a HoF candidate -- rejection doesn't make a tree's loss
+            # invalid, it just means the chain didn't move there.
+            self.hall_of_fame.update_many(chain_trace)
 
-        return pareto_front(all_visited)
+        return self.hall_of_fame.pareto_front()
 
     # ---- internals ----
 

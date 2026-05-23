@@ -56,6 +56,7 @@ from .losses import mse_loss
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
 from .const_opt import optimize_constants
+from .hall_of_fame import HallOfFame
 
 
 # ---------------- Config ----------------
@@ -222,6 +223,7 @@ class GP:
         self.rng = random.Random(self.cfg.seed)
         self.cache = FunctionalCache(mem_size=self.cfg.cache_mem_size)
         self.history: list[dict] = []
+        self.hall_of_fame = HallOfFame()
         self._stop_requested = False
         self._pool: ProcessPoolExecutor | None = None
 
@@ -250,6 +252,7 @@ class GP:
             )
 
         pop = self._init_population(feature_names, env, y_true)
+        self.hall_of_fame.update_many(pop)
         front = pareto_front(pop)
         best = min(pop, key=lambda c: c.fitness)
         self._log_gen(0, pop, front, best, t0=time.time())
@@ -265,12 +268,17 @@ class GP:
 
             t_gen = time.time()
             offspring = self._breed(pop, feature_names, env, y_true, gen)
+            # Update HoF with all newly-evaluated offspring -- this is the
+            # critical step that protects discoveries from mutation drift.
+            self.hall_of_fame.update_many(offspring)
             pop = self._survive(pop, offspring, front)
             front = pareto_front(pop)
 
             if (self.cfg.optimize_constants_every > 0
                 and gen % self.cfg.optimize_constants_every == 0):
                 pop = self._polish_pareto_constants(pop, front, env, y_true, gen)
+                # Polished candidates may be HoF improvements too
+                self.hall_of_fame.update_many(pop)
                 front = pareto_front(pop)
 
             best = min(pop, key=lambda c: c.fitness)
@@ -292,7 +300,12 @@ class GP:
             self._pool.shutdown(wait=True)
             self._pool = None
 
-        return front
+        # Return the Hall-of-Fame Pareto front, NOT the population front.
+        # HoF protects per-cx best-ever from being lost to mutation drift,
+        # so the final output is more honest about what the search
+        # discovered. (Population front is available via pareto_front(pop)
+        # if you need it — pop is internal but self.hall_of_fame is public.)
+        return self.hall_of_fame.pareto_front()
 
     # ---- internals ----
 
