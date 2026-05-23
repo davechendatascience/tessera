@@ -56,6 +56,13 @@ BIN_OP_FNS: dict[str, Callable] = {
     "div":  lambda a, b: np.where(b == 0, 0.0, a / np.where(b == 0, 1.0, b)),
     "min":  np.minimum,
     "max":  np.maximum,
+    # Threshold indicators — return float64 {0.0, 1.0} per element.
+    # Bridge to EML-style binary-window primitives without needing a
+    # dedicated WeightedIndicatorSum operator (see docs/roadmap.md §3).
+    "gt":   lambda a, b: (np.asarray(a) > np.asarray(b)).astype(np.float64),
+    "lt":   lambda a, b: (np.asarray(a) < np.asarray(b)).astype(np.float64),
+    "ge":   lambda a, b: (np.asarray(a) >= np.asarray(b)).astype(np.float64),
+    "le":   lambda a, b: (np.asarray(a) <= np.asarray(b)).astype(np.float64),
 }
 BIN_OPS = tuple(BIN_OP_FNS.keys())
 
@@ -65,6 +72,10 @@ UN_OP_FNS: dict[str, Callable] = {
     "abs":  np.abs,
     "sign": np.sign,
     "neg":  np.negative,
+    # Heaviside step: 1.0 if x > 0 else 0.0. Equivalent to gt(x, 0) but
+    # cheaper (no broadcast on the threshold side) and easier for the
+    # GP to discover.
+    "step": lambda x: (np.asarray(x) > 0.0).astype(np.float64),
 }
 UN_OPS = tuple(UN_OP_FNS.keys())
 
@@ -102,9 +113,12 @@ class BinOp:
             raise ValueError(f"unknown binary op {self.op!r}; valid: {BIN_OPS}")
 
     def __str__(self) -> str:
-        # Infix for arithmetic, prefix for min/max
-        if self.op in ("add", "sub", "mul", "div"):
-            sym = {"add": "+", "sub": "-", "mul": "*", "div": "/"}[self.op]
+        # Infix for arithmetic + comparison; prefix for min/max
+        if self.op in ("add", "sub", "mul", "div", "gt", "lt", "ge", "le"):
+            sym = {
+                "add": "+", "sub": "-", "mul": "*", "div": "/",
+                "gt": ">", "lt": "<", "ge": ">=", "le": "<=",
+            }[self.op]
             return f"({self.a} {sym} {self.b})"
         return f"{self.op}({self.a}, {self.b})"
 
@@ -446,6 +460,12 @@ def simplify(node: Node) -> Node:
         # min/max with equal args
         if op in ("min", "max") and a == b:
             return a
+
+        # Indicator identities on equal arguments
+        if op in ("gt", "lt") and a == b:
+            return Const(0.0)
+        if op in ("ge", "le") and a == b:
+            return Const(1.0)
 
         return BinOp(op, a, b)
 
