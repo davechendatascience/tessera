@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from .base import Candidate
 from .losses import mse_loss, _prediction_is_valid
+from .losses_trading import pnl_loss_hard, pnl_loss_smooth
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
 from .const_opt import optimize_constants
@@ -45,6 +46,7 @@ __all__ = [
     # Shared
     "Candidate",
     "mse_loss", "_prediction_is_valid", "_evaluate_tree",
+    "pnl_loss_hard", "pnl_loss_smooth",
     "pareto_front", "optimize_constants",
     "HallOfFame",
     # Searchers
