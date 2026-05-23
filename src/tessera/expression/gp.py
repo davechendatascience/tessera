@@ -107,6 +107,28 @@ class GPConfig:
 
     Default n_workers=1 keeps tests deterministic + portable. Tune up only
     for production runs where the per-eval cost dominates.
+
+    Note: when n_workers > 1, the loss_fn passed to GP() must be picklable
+    (importable top-level function or a `functools.partial` of one). Inline
+    `lambda` or factory-returned closures fail to pickle under the default
+    spawn start method and will raise at pool start. Use n_workers=1 if your
+    loss_fn isn't picklable.
+    """
+
+    # NaN robustness
+    min_valid_frac: float = 0.9
+    """Reject any candidate whose prediction has < min_valid_frac finite
+    entries (raised from 0.5 to 0.9 in v0.1.2 after observing the
+    `(x - x) / (x - x)` divide-by-zero pathology in real-world data:
+    a tree that produces mostly NaN can still pass a 50% threshold if
+    enough rows happen to evaluate, then score well via lucky finite
+    samples. Tightening to 90% closes this hole without breaking
+    legitimate edge-of-warm-up predictions.
+
+    Loss functions in tessera (mse_loss, and any user loss_fn) receive
+    the y_pred unchanged; the validity precheck happens before the
+    loss_fn is called. Loss functions can still do their own NaN
+    handling internally.
     """
 
 
@@ -132,15 +154,14 @@ class Candidate:
 # ---------------- Loss + evaluation ----------------
 
 def mse_loss(y_pred: np.ndarray, y_true: np.ndarray) -> float:
-    """Mean squared error, NaN-safe.
+    """Mean squared error.
 
-    Returns inf if shapes are incompatible OR fewer than half the
-    samples are finite (we count a prediction as "failed" if it's
-    mostly NaN — typical of overflowing constants or pathological
-    measure parameters).
+    The NaN-fraction validity check happens before this is called (see
+    `_prediction_is_valid`), so this function only handles shape
+    broadcasting and the residual NaN mask. Returns inf only on
+    irrecoverable shape mismatch.
     """
     if np.isscalar(y_pred):
-        # Broadcast scalar to match y_true
         y_pred = np.full_like(y_true, float(y_pred), dtype=np.float64)
     y_pred = np.asarray(y_pred)
     if y_pred.shape != y_true.shape:
@@ -149,12 +170,37 @@ def mse_loss(y_pred: np.ndarray, y_true: np.ndarray) -> float:
         except ValueError:
             return float("inf")
     mask = np.isfinite(y_pred) & np.isfinite(y_true)
-    n_valid = int(mask.sum())
-    # Need at least 50% of samples valid (and at least 2 absolute)
-    if n_valid < max(2, len(y_true) // 2):
+    if not mask.any():
         return float("inf")
     err = y_pred[mask] - y_true[mask]
     return float(np.mean(err ** 2))
+
+
+def _prediction_is_valid(
+    y_pred,
+    y_true: np.ndarray,
+    min_valid_frac: float,
+) -> bool:
+    """Centralised NaN-fraction precheck called before any loss_fn.
+
+    Returns False if:
+      - y_pred is a non-finite scalar
+      - shape can't broadcast to y_true
+      - fewer than `min_valid_frac` of entries are finite
+    """
+    if np.isscalar(y_pred):
+        return bool(np.isfinite(float(y_pred)))
+    y_pred = np.asarray(y_pred)
+    if y_pred.shape != y_true.shape:
+        try:
+            np.broadcast_to(y_pred, y_true.shape)
+        except ValueError:
+            return False
+        # broadcastable but not equal — let the loss handle it
+        return True
+    mask = np.isfinite(y_pred) & np.isfinite(y_true)
+    n_valid = int(mask.sum())
+    return n_valid >= max(2, int(min_valid_frac * len(y_true)))
 
 
 def _evaluate_tree(
@@ -164,10 +210,13 @@ def _evaluate_tree(
     cache: FunctionalCache,
     fill_warmup: float,
     loss_fn: Callable[[np.ndarray, np.ndarray], float],
+    min_valid_frac: float = 0.9,
 ) -> float:
     try:
         y_pred = evaluate(tree, env, cache=cache, fill_warmup=fill_warmup)
     except Exception:
+        return float("inf")
+    if not _prediction_is_valid(y_pred, y_true, min_valid_frac):
         return float("inf")
     if np.isscalar(y_pred):
         y_pred = np.full_like(y_true, float(y_pred), dtype=np.float64)
@@ -203,6 +252,8 @@ _WORKER_Y: np.ndarray = np.array([])
 _WORKER_CACHE: FunctionalCache | None = None
 _WORKER_FILL_WARMUP: float = 0.0
 _WORKER_PARSIMONY: float = 0.005
+_WORKER_LOSS_FN: Callable[[np.ndarray, np.ndarray], float] = mse_loss
+_WORKER_MIN_VALID_FRAC: float = 0.9
 
 
 def _init_worker(
@@ -211,15 +262,23 @@ def _init_worker(
     cache_mem_size: int,
     fill_warmup: float,
     parsimony: float,
+    loss_fn: Callable[[np.ndarray, np.ndarray], float],
+    min_valid_frac: float,
 ) -> None:
-    """Run once per worker on pool startup. Pickles env+y across just once
-    rather than per-task."""
-    global _WORKER_ENV, _WORKER_Y, _WORKER_CACHE, _WORKER_FILL_WARMUP, _WORKER_PARSIMONY
+    """Run once per worker on pool startup. Pickles env+y+loss_fn across
+    just once rather than per-task. The loss_fn must be picklable (a
+    top-level function or a functools.partial of one) — inline lambdas
+    or factory closures will fail under spawn-based pool start."""
+    global _WORKER_ENV, _WORKER_Y, _WORKER_CACHE
+    global _WORKER_FILL_WARMUP, _WORKER_PARSIMONY
+    global _WORKER_LOSS_FN, _WORKER_MIN_VALID_FRAC
     _WORKER_ENV = env
     _WORKER_Y = y_true
     _WORKER_CACHE = FunctionalCache(mem_size=cache_mem_size)
     _WORKER_FILL_WARMUP = fill_warmup
     _WORKER_PARSIMONY = parsimony
+    _WORKER_LOSS_FN = loss_fn
+    _WORKER_MIN_VALID_FRAC = min_valid_frac
 
 
 def _score_in_worker(tree_and_gen: tuple[Node, int]) -> Candidate:
@@ -229,7 +288,9 @@ def _score_in_worker(tree_and_gen: tuple[Node, int]) -> Candidate:
     cx = complexity(tree)
     loss = _evaluate_tree(
         tree, _WORKER_ENV, _WORKER_Y, _WORKER_CACHE,
-        fill_warmup=_WORKER_FILL_WARMUP, loss_fn=mse_loss,
+        fill_warmup=_WORKER_FILL_WARMUP,
+        loss_fn=_WORKER_LOSS_FN,
+        min_valid_frac=_WORKER_MIN_VALID_FRAC,
     )
     fitness = loss + _WORKER_PARSIMONY * cx
     return Candidate(tree=tree, train_loss=loss, complexity=cx,
@@ -285,7 +346,8 @@ class GP:
                 max_workers=self.cfg.n_workers,
                 initializer=_init_worker,
                 initargs=(env, y_true, self.cfg.cache_mem_size,
-                          self.cfg.fill_warmup, self.cfg.parsimony),
+                          self.cfg.fill_warmup, self.cfg.parsimony,
+                          self.loss_fn, self.cfg.min_valid_frac),
             )
 
         # Initialise population
@@ -371,7 +433,9 @@ class GP:
         cx = complexity(tree)
         loss = _evaluate_tree(
             tree, env, y_true, self.cache,
-            fill_warmup=self.cfg.fill_warmup, loss_fn=self.loss_fn,
+            fill_warmup=self.cfg.fill_warmup,
+            loss_fn=self.loss_fn,
+            min_valid_frac=self.cfg.min_valid_frac,
         )
         fitness = loss + self.cfg.parsimony * cx
         return Candidate(tree=tree, train_loss=loss, complexity=cx,

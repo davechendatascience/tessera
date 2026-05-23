@@ -8,6 +8,7 @@ import pytest
 
 from tessera.expression.gp import (
     Candidate, GP, GPConfig, mse_loss, pareto_front,
+    _prediction_is_valid,
 )
 from tessera.expression.tree import (
     Var, Const, BinOp, UnOp, FunctionalOp, complexity,
@@ -23,12 +24,52 @@ def test_mse_loss_basic():
     y_pred = np.array([1.0, 2.0, 3.0, 4.0])
     assert mse_loss(y_pred, y_true) == 0.0
 
-def test_mse_loss_nan_predictions_excluded_then_penalized():
-    """Predictions with too few valid samples should yield inf."""
+def test_mse_loss_nan_handling():
+    """mse_loss averages over the finite mask. The NaN-fraction precheck
+    (rejecting majority-NaN predictions) lives in _prediction_is_valid,
+    which the GP scoring path calls before mse_loss."""
     y_true = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
     y_pred = np.array([np.nan]*4 + [5.0])
-    # Only 1 valid sample (below the 10/N=5 min threshold) → inf
-    assert mse_loss(y_pred, y_true) == float("inf")
+    # mse_loss averages over only the finite samples: err = (5-5)^2 = 0
+    assert mse_loss(y_pred, y_true) == 0.0
+
+
+def test_prediction_is_valid_rejects_too_many_nans():
+    """The precheck (default min_valid_frac=0.9) rejects when fewer
+    than 90% of entries are finite. There's also a hard floor of 2
+    finite samples so a single lucky point can't pass."""
+    y_true = np.arange(100, dtype=float)
+
+    # 95% finite — passes 0.9 threshold
+    y_95 = y_true.copy(); y_95[:5] = np.nan
+    assert _prediction_is_valid(y_95, y_true, min_valid_frac=0.9)
+
+    # 80% finite — fails 0.9, passes 0.5
+    y_80 = y_true.copy(); y_80[:20] = np.nan
+    assert not _prediction_is_valid(y_80, y_true, min_valid_frac=0.9)
+    assert _prediction_is_valid(y_80, y_true, min_valid_frac=0.5)
+
+    # All finite — passes anything
+    assert _prediction_is_valid(y_true.copy(), y_true, min_valid_frac=0.9)
+
+    # Hard floor: even at frac=0.0, need >=2 finite samples
+    y_one = np.full_like(y_true, np.nan); y_one[50] = 1.0
+    assert not _prediction_is_valid(y_one, y_true, min_valid_frac=0.0)
+
+
+def test_prediction_is_valid_handles_scalar_predictions():
+    y_true = np.arange(5.0)
+    assert _prediction_is_valid(2.0, y_true, 0.9)         # finite scalar OK
+    assert not _prediction_is_valid(float("nan"), y_true, 0.9)
+    assert not _prediction_is_valid(float("inf"), y_true, 0.9)
+
+
+def test_prediction_is_valid_catches_div_by_zero_pathology():
+    """The (logret - logret) / (logret - logret) GP pathology produces
+    all-NaN; precheck must reject it."""
+    y_true = np.linspace(-1.0, 1.0, 100)
+    y_pred_all_nan = np.full(100, np.nan)
+    assert not _prediction_is_valid(y_pred_all_nan, y_true, 0.9)
 
 def test_mse_loss_shape_broadcast_or_inf():
     y_true = np.array([1.0, 2.0, 3.0])
@@ -274,3 +315,103 @@ def test_gp_cache_records_hits_over_generations():
     gp.run({"x": x}, y, ["x"])
     # Some hits must have happened (subexpression reuse)
     assert gp.cache.stats["mem_hits"] > 0
+
+
+# ---------------- Custom loss_fn ----------------
+
+def _abs_err_loss(y_pred, y_true):
+    """Top-level (picklable) custom loss — mean absolute error.
+
+    Defined at module level so it survives ProcessPoolExecutor pickling.
+    Closures and lambdas would not.
+    """
+    y_pred = np.asarray(y_pred)
+    if np.isscalar(y_pred) or y_pred.shape == ():
+        y_pred = np.full_like(y_true, float(y_pred), dtype=np.float64)
+    mask = np.isfinite(y_pred) & np.isfinite(y_true)
+    if not mask.any():
+        return float("inf")
+    return float(np.mean(np.abs(y_pred[mask] - y_true[mask])))
+
+
+def test_gp_serial_path_honors_custom_loss_fn():
+    """GP(loss_fn=...) uses the custom loss in the serial scoring path."""
+    rng = np.random.default_rng(7)
+    n = 300
+    x = rng.standard_normal(n)
+    y = x + 0.05 * rng.standard_normal(n)
+
+    cfg = GPConfig(pop_size=30, n_gens=5, verbose=False, seed=77, n_workers=1)
+    gp = GP(cfg, loss_fn=_abs_err_loss)
+    front = gp.run({"x": x}, y, ["x"])
+    # All losses must be in the MAE scale (~0.1), not MSE (~0.01)
+    assert all(c.train_loss >= 0 for c in front)
+    # Sanity: identity x should reach ~0.04 MAE (noise-floor)
+    best = min(front, key=lambda c: c.train_loss)
+    assert best.train_loss < 0.1, f"MAE-best={best.train_loss} too high for x+noise"
+
+
+def test_gp_worker_path_honors_custom_loss_fn():
+    """When n_workers>1, the worker also uses the custom loss.
+
+    Regression for the bug where _score_in_worker hardcoded mse_loss.
+    """
+    import sys
+    if sys.platform == "win32":
+        # Windows spawn requires the worker to re-import the test module.
+        # Pytest's collected modules aren't always re-importable under spawn,
+        # so this test is restricted to platforms where fork is the default.
+        pytest.skip("workers use spawn on Windows; loss_fn pickling needs "
+                    "the function to be importable, which pytest test modules "
+                    "may not satisfy")
+    rng = np.random.default_rng(8)
+    n = 500
+    x = rng.standard_normal(n)
+    y = x + 0.05 * rng.standard_normal(n)
+
+    cfg = GPConfig(pop_size=40, n_gens=4, verbose=False, seed=88, n_workers=2)
+    gp = GP(cfg, loss_fn=_abs_err_loss)
+    front = gp.run({"x": x}, y, ["x"])
+    best = min(front, key=lambda c: c.train_loss)
+    # If worker used the OLD hardcoded mse_loss, best would be ~0.0025;
+    # with the abs_err loss, best is ~0.04 (the MAE noise floor).
+    assert best.train_loss > 0.01, (
+        f"worker appears to have used mse_loss instead of custom loss: "
+        f"best train_loss={best.train_loss} looks MSE-scaled"
+    )
+
+
+def test_gp_evaluate_tree_rejects_mostly_nan_predictions():
+    """Regression: a tree that produces majority-NaN output must score
+    inf, not silently pass through to loss_fn (which might average over
+    the lucky finite samples and return an artificially good score).
+
+    Construction: feed a feature that's mostly NaN (e.g., a sparse signal
+    with most rows missing). The simplest tree `Var("x")` then returns
+    the NaN input — precheck catches it.
+    """
+    from tessera.expression.tree import Var
+    from tessera.expression.gp import _evaluate_tree
+    n = 200
+    # 80% NaN, 20% finite — below the default min_valid_frac=0.9
+    x = np.full(n, np.nan); x[:40] = np.linspace(0, 1, 40)
+    y_true = np.linspace(0, 1, n)
+
+    cfg = GPConfig(pop_size=30, n_gens=3, verbose=False, seed=99)
+    gp = GP(cfg)
+
+    # With default 0.9 threshold, the 0.2 valid fraction is rejected
+    loss_strict = _evaluate_tree(
+        Var("x"), {"x": x}, y_true, gp.cache,
+        fill_warmup=0.0, loss_fn=mse_loss, min_valid_frac=0.9,
+    )
+    assert loss_strict == float("inf"), \
+        f"precheck should reject 20%-valid prediction at 90% threshold; got {loss_strict}"
+
+    # With loose threshold (0.1), 20% valid passes
+    loss_loose = _evaluate_tree(
+        Var("x"), {"x": x}, y_true, gp.cache,
+        fill_warmup=0.0, loss_fn=mse_loss, min_valid_frac=0.1,
+    )
+    assert np.isfinite(loss_loose), \
+        f"precheck should accept 20%-valid prediction at 10% threshold; got {loss_loose}"
