@@ -6,6 +6,32 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (validation experiment)
+- **`benchmarks/run_mnist_feature_discovery.py`** — runs the §12 first
+  step from `invariance_in_sr.md`: MNIST 0-vs-rest classification
+  using current (untyped) tessera + hardcoded mean-aggregation.
+  Custom GP loop (per-image scoring; tessera's `GP.run` can't handle
+  per-sample evaluation directly).
+
+  **Result:** TEST accuracy 0.82 (chance 0.50) on 100 test samples,
+  with pop=50/gens=15/200 train images at 14×14 downsampled. The GP
+  discovered a horizontal Laplacian kernel `[+1, -2, +1]` wrapped in
+  `step()` — i.e., a recognizable classical edge detector — from data
+  in 14 seconds wall-clock. Kernel visualization saved to
+  `benchmarks/results/mnist_discovered_kernel.png`.
+
+  **Validates** the underlying claim of `invariance_in_sr.md`:
+  tessera's measure-theoretic operators + simple aggregation can
+  discover interpretable, translation-equivariant feature kernels.
+  The axis-types architecture proposed in that note is worth
+  building.
+
+  **Caveat:** 0.82 is not CNN-competitive (CNNs reach ~0.99). The gap
+  motivates the architectural follow-ups: discoverable aggregator
+  operators (max-pool, etc.), larger budget, and the `tessera.axes`
+  type system that lets the GP search BOTH the kernel and the
+  pooling rule.
+
 ### Added (research notes)
 - **`docs/research_notes/invariance_in_sr.md`** — invariance, sensor
   data, and axis-semantic SR. Argues for making **axis semantics a
