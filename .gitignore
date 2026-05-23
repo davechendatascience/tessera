@@ -27,3 +27,7 @@ env/
 # Tessera-specific: persistent feature cache from FunctionalCache
 **/_feat_cache/
 **/cache/feat/
+
+# Benchmark data caches (downloaded netCDFs, intermediate caches)
+benchmarks/data/_cache/
+

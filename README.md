@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/davechendatascience/tessera/main/resources/logo.png" alt="tessera" width="480">
+</p>
+
 # tessera
 
 > *"Each piece of a mosaic is small and simple. The whole is composed."*
