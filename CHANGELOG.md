@@ -6,6 +6,26 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (measure algebra)
+- **`Measure.compose(other)`** — measure convolution `μ * ν` returning
+  a new canonical Measure. Maps to the operator-algebra identity
+  $L_{\mu * \nu}(x) = L_\mu(L_\nu(x))$ from
+  `docs/research_notes/measure_theory_and_perfect_info.md` §3.3.
+  Implementation: `np.convolve` of the two discrete kernels, then
+  sparsify into atoms. Tests cover: lag composition, diff*diff = 2nd
+  diff, identity element (δ₀), zero element, commutativity,
+  associativity, semantic equivalence with nested apply on the
+  interior (NaN warmup), signed cancellation, and canonical-form output.
+- **`collapse_functional_chain` mutation** — new GP mutation operator
+  that finds `L_μ(L_ν(x))` patterns in a tree and replaces with
+  `L_{μ*ν}(x)`. Strictly reduces complexity (typically by ~1 node) and
+  exploits the measure-algebra equivalence the search couldn't
+  previously discover via random mutation. Weight 0.05 in OP_WEIGHTS
+  (the existing measure_mutate dropped to 0.07, measure_2d_mutate to 0.03).
+  Skipped in `pointwise_only` mode. Tests verify pattern matching,
+  complexity reduction, semantic preservation, and dispatcher
+  integration.
+
 ### Changed
 - **Measure canonicalisation at construction** — `Measure.__post_init__`
   now sorts atoms by lag, merges duplicates (summing weights), and

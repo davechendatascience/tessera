@@ -364,6 +364,45 @@ class Measure:
                 return False
         return True
 
+    # ---- Composition (convolution of measures) ----
+
+    def compose(self, other: "Measure", zero_tol: float = 1e-12) -> "Measure":
+        """Measure convolution: μ * ν.
+
+        Mathematically (Reznikov §3.4):
+            ∫ x(t - τ) d(μ*ν)(τ)
+              = ∫∫ x(t - τ_1 - τ_2) dμ(τ_1) dν(τ_2)
+
+        Operationally: applying `μ.compose(ν)` to x gives the same
+        result as applying ν first, then applying μ to the result.
+
+        That is the identity that lets the SR search collapse
+        `L_μ(L_ν(x)) → L_{μ*ν}(x)` — see the §3.3 (measure-algebra
+        identities) of docs/research_notes/measure_theory_and_perfect_info.md.
+
+        Implementation: discrete convolution of the two kernels via
+        `np.convolve`. The resulting kernel is then sparsified into
+        an atomic representation (one atom per nonzero coefficient).
+        We lose the compact density representation, but keep semantic
+        identity. For dense convolutions, this can produce many atoms;
+        in practice tessera's search keeps measures small enough that
+        the atomic form stays tractable.
+
+        Returns
+        -------
+        A new Measure representing μ*ν. Atomic-only; the support is
+        the sum of the inputs' supports.
+        """
+        k_a = self.to_kernel()
+        k_b = other.to_kernel()
+        k_compose = np.convolve(k_a, k_b)
+        atoms = tuple(
+            Atom(weight=float(w), lag=int(lag))
+            for lag, w in enumerate(k_compose) if abs(w) >= zero_tol
+        )
+        support_max = max(0, len(k_compose) - 1)
+        return Measure(atoms=atoms, support_max=support_max)
+
     # ---- Materialisation ----
 
     def to_kernel(self) -> np.ndarray:

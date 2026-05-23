@@ -441,15 +441,69 @@ def measure_mutate(tree: Node, rng: random.Random) -> Node:
 
 # ---------------- Top-level dispatcher ----------------
 
+def collapse_functional_chain(tree: Node, rng: random.Random) -> Node:
+    """Collapse a nested LinearFunctional chain via measure convolution.
+
+    Pattern matched:
+        FunctionalOp(LinearFunctional(μ), (FunctionalOp(LinearFunctional(ν), (x,)),))
+
+    Replaced with:
+        FunctionalOp(LinearFunctional(μ ∗ ν), (x,))
+
+    This is the measure-algebra identity `L_μ(L_ν(x)) ≡ L_{μ∗ν}(x)`
+    from docs/research_notes/measure_theory_and_perfect_info.md §3.3.
+    Strictly reduces tree node count (typically by ~3 nodes), and the
+    composed measure is automatically canonicalised by
+    `Measure.__post_init__`.
+
+    Raises ValueError if the tree contains no such pattern (the
+    `mutate()` dispatcher catches and retries with a different op).
+    """
+    # Collect pre-order indices of nodes that match the pattern
+    candidates: list[int] = []
+    for idx, sub in enumerate(iter_subtrees(tree)):
+        if (
+            isinstance(sub, FunctionalOp)
+            and isinstance(sub.functional, LinearFunctional)
+            and len(sub.args) == 1
+            and isinstance(sub.args[0], FunctionalOp)
+            and isinstance(sub.args[0].functional, LinearFunctional)
+        ):
+            candidates.append(idx)
+    if not candidates:
+        raise ValueError("no LinearFunctional chain to collapse")
+    chosen_idx = rng.choice(candidates)
+
+    # Find the actual node at chosen_idx
+    chosen_node: Node | None = None
+    for idx, sub in enumerate(iter_subtrees(tree)):
+        if idx == chosen_idx:
+            chosen_node = sub
+            break
+    assert chosen_node is not None
+    assert isinstance(chosen_node, FunctionalOp)
+    inner = chosen_node.args[0]
+    assert isinstance(inner, FunctionalOp)
+
+    # Build the collapsed node: L_{μ ∗ ν}(x) where x = inner.args[0]
+    composed_measure = chosen_node.functional.measure.compose(
+        inner.functional.measure
+    )
+    new_functional = LinearFunctional(measure=composed_measure)
+    new_node = FunctionalOp(new_functional, inner.args)
+    return replace_at(tree, chosen_idx, new_node)
+
+
 OP_WEIGHTS = {
-    "subtree_swap":       0.20,
-    "subtree_crossover":  0.20,
-    "constant_jitter":    0.15,
-    "term_insert":        0.10,
-    "term_delete":        0.10,
-    "op_swap":            0.10,
-    "measure_mutate":     0.10,
-    "measure_2d_mutate":  0.05,
+    "subtree_swap":              0.20,
+    "subtree_crossover":         0.20,
+    "constant_jitter":           0.15,
+    "term_insert":                0.10,
+    "term_delete":                0.10,
+    "op_swap":                    0.10,
+    "measure_mutate":            0.07,
+    "measure_2d_mutate":         0.03,
+    "collapse_functional_chain": 0.05,
 }
 
 
@@ -478,7 +532,9 @@ def mutate(
 
     for _ in range(max_attempts):
         op_name = rng.choices(keys, weights=weights, k=1)[0]
-        if pointwise_only and op_name in ("measure_mutate", "measure_2d_mutate"):
+        if pointwise_only and op_name in (
+            "measure_mutate", "measure_2d_mutate", "collapse_functional_chain",
+        ):
             # No FunctionalOp / FunctionalOp2D in pointwise-only trees.
             continue
         try:
@@ -506,6 +562,8 @@ def mutate(
                 child = measure_mutate(parents[0], rng)
             elif op_name == "measure_2d_mutate":
                 child = measure_2d_mutate(parents[0], rng)
+            elif op_name == "collapse_functional_chain":
+                child = collapse_functional_chain(parents[0], rng)
             else:
                 continue
         except Exception:
@@ -520,6 +578,7 @@ __all__ = [
     "validate_tree",
     "random_measure", "random_measure_2d", "random_functional", "random_tree",
     "subtree_swap", "subtree_crossover", "constant_jitter",
-    "term_insert", "term_delete", "op_swap", "measure_mutate", "measure_2d_mutate",
+    "term_insert", "term_delete", "op_swap",
+    "measure_mutate", "measure_2d_mutate", "collapse_functional_chain",
     "OP_WEIGHTS", "mutate",
 ]
