@@ -48,6 +48,12 @@ from .mutation import (
 from .gp import (
     GPConfig, Candidate, GP, mse_loss, pareto_front,
 )
+from .measure_2d import (
+    Atom2D, Measure2D,
+    measure_2d_atomic, measure_2d_separable,
+    measure_2d_laplacian_5pt, measure_2d_diff_t, measure_2d_grad_x,
+    measure_2d_sobel_x, measure_2d_sobel_y,
+)
 
 __all__ = [
     # measure
@@ -72,4 +78,9 @@ __all__ = [
     "OP_WEIGHTS", "mutate",
     # gp
     "GPConfig", "Candidate", "GP", "mse_loss", "pareto_front",
+    # 2D measures
+    "Atom2D", "Measure2D",
+    "measure_2d_atomic", "measure_2d_separable",
+    "measure_2d_laplacian_5pt", "measure_2d_diff_t", "measure_2d_grad_x",
+    "measure_2d_sobel_x", "measure_2d_sobel_y",
 ]
