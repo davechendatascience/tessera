@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tessera"
+version = "0.1.0"
+description = "Applied-math primitives for compositional ML — measures, symbolic operators, state-space inference, differentiable feature engineering."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "David Chen" },
+]
+keywords = [
+  "symbolic-regression",
+  "dynamical-systems",
+  "measure-theory",
+  "koopman",
+  "state-space-models",
+  "applied-mathematics",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Mathematics",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "License :: OSI Approved :: MIT License",
+]
+
+# Minimal runtime deps — everything else is optional via [project.optional-dependencies].
+# We deliberately avoid pysindy / pykoopman to dodge their hand-install pain;
+# tessera reimplements the primitives we need directly.
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "numba>=0.60",
+  "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+sympy = ["sympy>=1.12"]
+pysr  = ["pysr>=1.0"]
+dev   = ["pytest>=7.0", "pytest-cov", "ruff", "mypy"]
+all   = ["sympy>=1.12", "pysr>=1.0"]
+
+[project.urls]
+"Source"        = "https://github.com/davechendatascience/tessera"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+tessera = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

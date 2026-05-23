@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build artefacts
+build/
+dist/
+*.egg
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Tessera-specific: persistent feature cache from FunctionalCache
+**/_feat_cache/
+**/cache/feat/
