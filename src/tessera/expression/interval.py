@@ -253,9 +253,40 @@ def _ival_step(a: Interval) -> Interval:
     return Interval(0.0, 1.0)
 
 
+def _ival_reduce_minmax(a: Interval) -> Interval:
+    """reduce_mean / reduce_max / reduce_min / reduce_std: the result is
+    a scalar inside the input's interval. Mean and max stay in [lo, hi].
+    """
+    return Interval(a.lo, a.hi)
+
+
+def _ival_reduce_sum(a: Interval) -> Interval:
+    """reduce_sum: bound depends on the array size which the interval
+    evaluator doesn't know. Conservative: [-inf, +inf] when input
+    spans zero; same-sign-bound otherwise."""
+    if a.lo >= 0:
+        return Interval(0.0, math.inf)
+    if a.hi <= 0:
+        return Interval(-math.inf, 0.0)
+    return Interval.unbounded()
+
+
+def _ival_reduce_std(a: Interval) -> Interval:
+    """reduce_std: std ∈ [0, (hi - lo) / 2] for finite samples; can be
+    larger in pathological cases. Conservative: [0, hi - lo]."""
+    if math.isfinite(a.lo) and math.isfinite(a.hi):
+        spread = a.hi - a.lo
+        return Interval(0.0, spread)
+    return Interval(0.0, math.inf)
+
+
 _UN_IVAL_FNS = {
     "neg": _ival_neg, "abs": _ival_abs, "tanh": _ival_tanh,
     "sign": _ival_sign, "step": _ival_step,
+    "reduce_mean": _ival_reduce_minmax,
+    "reduce_max":  _ival_reduce_minmax,
+    "reduce_sum":  _ival_reduce_sum,
+    "reduce_std":  _ival_reduce_std,
 }
 
 

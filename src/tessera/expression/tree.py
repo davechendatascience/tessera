@@ -67,6 +67,40 @@ BIN_OP_FNS: dict[str, Callable] = {
 BIN_OPS = tuple(BIN_OP_FNS.keys())
 
 # Unary
+def _reduce_mean(x):
+    x = np.asarray(x)
+    mask = np.isfinite(x)
+    if not mask.any():
+        return float("nan")
+    return float(x[mask].mean())
+
+
+def _reduce_max(x):
+    x = np.asarray(x)
+    mask = np.isfinite(x)
+    if not mask.any():
+        return float("nan")
+    return float(x[mask].max())
+
+
+def _reduce_sum(x):
+    x = np.asarray(x)
+    mask = np.isfinite(x)
+    if not mask.any():
+        return float("nan")
+    return float(x[mask].sum())
+
+
+def _reduce_std(x):
+    x = np.asarray(x)
+    mask = np.isfinite(x)
+    if not mask.any():
+        return float("nan")
+    if int(mask.sum()) < 2:
+        return 0.0
+    return float(x[mask].std())
+
+
 UN_OP_FNS: dict[str, Callable] = {
     "tanh": np.tanh,
     "abs":  np.abs,
@@ -76,6 +110,14 @@ UN_OP_FNS: dict[str, Callable] = {
     # cheaper (no broadcast on the threshold side) and easier for the
     # GP to discover.
     "step": lambda x: (np.asarray(x) > 0.0).astype(np.float64),
+    # Reductions: array → scalar. Always reduce ALL axes. Used to convert
+    # a 2-D feature map into a translation-invariant scalar prediction
+    # (see docs/research_notes/invariance_in_sr.md). The GP can place
+    # these anywhere; downstream BinOps will numpy-broadcast the scalar.
+    "reduce_mean": _reduce_mean,
+    "reduce_max":  _reduce_max,
+    "reduce_sum":  _reduce_sum,
+    "reduce_std":  _reduce_std,
 }
 UN_OPS = tuple(UN_OP_FNS.keys())
 
