@@ -44,9 +44,8 @@ from typing import Callable
 import numpy as np
 
 from tessera.expression.cache import FunctionalCache
-from tessera.expression.tree import (
-    Node, complexity, simplify,
-)
+from tessera.expression.tree import Node, complexity
+from tessera.expression.simplify import simplify
 from tessera.expression.mutation import (
     mutate, random_tree, validate_tree,
 )

@@ -36,8 +36,9 @@ from .tree import (
     Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D, Node,
     BIN_OPS, UN_OPS, BIN_OP_FNS, UN_OP_FNS,
     complexity, depth, used_features, iter_subtrees, replace_at, evaluate,
-    simplify, collect_const_values, set_const_values,
+    collect_const_values, set_const_values,
 )
+from .simplify import simplify
 from .mutation import (
     MAX_DEPTH, MAX_COMPLEXITY, MAX_CONST_MAGNITUDE,
     validate_tree,
