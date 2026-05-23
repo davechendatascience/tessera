@@ -114,12 +114,63 @@ def compute_oracle_baselines(T: np.ndarray) -> dict:
     )
 
 
+def compute_oracle_baselines_on_slice(T_slice: np.ndarray) -> dict:
+    """Same 4 oracles, but fit on the (T_days, X) mid-latitude row.
+
+    This is the apples-to-apples comparison for the GP: the GP also sees
+    only this slice (since FunctionalOp2D expects a (time, space) array,
+    not a (time, lat, lon) cube). Diffusion drops to a 1D horizontal
+    Laplacian since there's no y-direction in a single row.
+
+    Note: tessera's mse_loss uses a "fill_warmup" convention that scores
+    on indices `[fill_warmup * T:]`. With fill_warmup=0.0 it scores on
+    the entire array — INCLUDING the last row where dt_T = 0 (target
+    is undefined). The oracle MSE here matches that convention so the
+    numbers compare directly to GP loss.
+    """
+    dt_T = np.zeros_like(T_slice)
+    dt_T[:-1] = T_slice[1:] - T_slice[:-1]
+    # GP scores over the FULL (T, X) including dt_T[-1] = 0. So variance
+    # should also be computed over the full array.
+    var_dT = float(np.var(dt_T))
+    tgt = dt_T   # full array, matches GP's training domain
+
+    # 1. Predict zero
+    mse_zero = float(np.mean(tgt ** 2))   # = var_dT + mean^2 ≈ var_dT
+
+    # 2. Newtonian relaxation on the slice
+    T_bar = float(T_slice.mean())
+    anom = T_slice - T_bar
+    alpha, intercept, mse_newton = fit_linear(anom, tgt)
+
+    # 3. 1D horizontal Laplacian on the slice
+    lap_x = np.zeros_like(T_slice)
+    lap_x[:, 1:-1] = T_slice[:, :-2] - 2.0 * T_slice[:, 1:-1] + T_slice[:, 2:]
+    a, b, mse_diff = fit_linear(lap_x, tgt)
+
+    # 4. AR(1) persistence on the slice: dT/dt[t] = β · (T[t] - T[t-1])
+    delta_prev = np.zeros_like(T_slice)
+    delta_prev[1:] = T_slice[1:] - T_slice[:-1]
+    a4, b4, mse_ar1 = fit_linear(delta_prev, tgt)
+
+    return dict(
+        var_dT=var_dT,
+        mse_zero=mse_zero,
+        mse_newton=mse_newton, alpha_newton=alpha, intercept_newton=intercept,
+        mse_diff=mse_diff, alpha_diff=a,
+        mse_ar1=mse_ar1, beta_ar1=a4,
+    )
+
+
 # ---------------- GP search ----------------
 
 def run_gp_2d(T: np.ndarray, dt_T: np.ndarray, cfg: GPConfig,
-              var_dT: float) -> list:
+              var_dT: float) -> tuple:
     """Run tessera GP in 2-D mode. T has shape (T_days, Y, X) — tessera's
-    2-D evaluator treats axis 0 as time, axis 1 as space."""
+    2-D evaluator treats axis 0 as time, axis 1 as space.
+
+    Returns (front, runtime, T_slice).
+    """
     # Pick a horizontal "slice" — use the middle latitude row as a
     # representative 1-D space-time field. This is the natural way to
     # use FunctionalOp2D which expects (time, space) shape.
@@ -138,7 +189,7 @@ def run_gp_2d(T: np.ndarray, dt_T: np.ndarray, cfg: GPConfig,
     front = gp.run(env, dt_T_slice, feature_names=["T"])
     runtime = time.time() - t0
     print(f"[gp] runtime {runtime:.1f}s, Pareto front size {len(front)}")
-    return front, runtime
+    return front, runtime, T_slice
 
 
 def measure_2d_summary(node) -> str:
@@ -151,42 +202,67 @@ def measure_2d_summary(node) -> str:
 
 # ---------------- Report ----------------
 
-def write_report(front, cfg, runtime, oracle, T_shape, year, lats, lons,
-                 out_path: Path) -> None:
+def write_report(front, cfg, runtime, oracle, oracle_slice, T_shape, year,
+                 lats, lons, out_path: Path) -> None:
     var_dT = oracle["var_dT"]
+    var_dT_slice = oracle_slice["var_dT"]
     L = ["# Weather PDE rediscovery benchmark (NCEP/NCAR Reanalysis 2)", ""]
     L.append(f"**Data:** NCEP-DOE AMIP-II Reanalysis daily 2m temperature, year {year}")
     L.append(f"**Grid:** {T_shape[0]} days × {T_shape[1]} lats × {T_shape[2]} lons "
              f"(lat {lats[0]:.1f}..{lats[-1]:.1f}, lon {lons[0]:.1f}..{lons[-1]:.1f})")
-    L.append(f"**Target:** `dT/dt = T[t+1] − T[t]`, var = {var_dT:.4g} K²/day²")
+    L.append(f"**Target:** `dT/dt = T[t+1] − T[t]`, var = {var_dT:.4g} K²/day² "
+             f"(full grid); {var_dT_slice:.4g} K²/day² (mid-lat row slice)")
     L.append(f"**GP:** pop={cfg.pop_size}, gens={cfg.n_gens}, "
              f"parsimony={cfg.parsimony:.3g}, enable_2d={cfg.enable_2d}, "
              f"runtime={runtime:.1f}s")
     L.append("")
-    L.append("## Oracle baselines (hand-coded, OLS-fit)")
+    L.append("## Oracle baselines — full grid (context)")
     L.append("")
-    L.append("| # | Expression | MSE | % of target var |")
+    L.append("Fit on all (T, Y, X) interior points. Provided for context;"
+             " the GP only sees the slice, so use the next table for the"
+             " apples-to-apples comparison.")
+    L.append("")
+    L.append("| # | Expression | MSE | % of full var |")
     L.append("|---|---|---|---|")
     L.append(f"| 0 | predict 0 (no change) | {oracle['mse_zero']:.4g} | 100.0% |")
-    L.append(f"| 1 | `-{-oracle['alpha_newton']:.4g}·(T − T̄)`  (Newtonian relaxation) "
+    L.append(f"| 1 | `{oracle['alpha_newton']:+.4g}·(T − T̄)`  (Newtonian relaxation) "
              f"| {oracle['mse_newton']:.4g} "
              f"| {100*oracle['mse_newton']/var_dT:.1f}% |")
-    L.append(f"| 2 | `{oracle['alpha_diff']:.4g}·∇²T`  (diffusion) "
+    L.append(f"| 2 | `{oracle['alpha_diff']:+.4g}·∇²T`  (diffusion, 2D) "
              f"| {oracle['mse_diff']:.4g} "
              f"| {100*oracle['mse_diff']/var_dT:.1f}% |")
-    L.append(f"| 3 | `{oracle['beta_ar1']:.4g}·(T[t]−T[t-1])`  (AR(1) persistence) "
+    L.append(f"| 3 | `{oracle['beta_ar1']:+.4g}·(T[t]−T[t-1])`  (AR(1) persistence) "
              f"| {oracle['mse_ar1']:.4g} "
              f"| {100*oracle['mse_ar1']/var_dT:.1f}% |")
     L.append("")
-    L.append("These are the bars the GP needs to beat to claim it found "
-             "structure beyond simple linear filters.")
+    L.append("## Oracle baselines — mid-latitude row slice (apples-to-apples)")
+    L.append("")
+    L.append(f"Same baselines refit on the (T, X) slice the GP sees "
+             f"(var = {var_dT_slice:.4g} K²/day²). Diffusion drops to a "
+             f"1D horizontal Laplacian (no y-direction in a single row).")
+    L.append("")
+    L.append("| # | Expression | MSE | % of slice var |")
+    L.append("|---|---|---|---|")
+    L.append(f"| 0 | predict 0 (no change) | {oracle_slice['mse_zero']:.4g} | "
+             f"{100*oracle_slice['mse_zero']/var_dT_slice:.1f}% |")
+    L.append(f"| 1 | `{oracle_slice['alpha_newton']:+.4g}·(T − T̄)`  (Newtonian relaxation) "
+             f"| {oracle_slice['mse_newton']:.4g} "
+             f"| {100*oracle_slice['mse_newton']/var_dT_slice:.1f}% |")
+    L.append(f"| 2 | `{oracle_slice['alpha_diff']:+.4g}·∂²T/∂x²`  (1D horizontal diffusion) "
+             f"| {oracle_slice['mse_diff']:.4g} "
+             f"| {100*oracle_slice['mse_diff']/var_dT_slice:.1f}% |")
+    L.append(f"| 3 | `{oracle_slice['beta_ar1']:+.4g}·(T[t]−T[t-1])`  (AR(1) persistence) "
+             f"| {oracle_slice['mse_ar1']:.4g} "
+             f"| {100*oracle_slice['mse_ar1']/var_dT_slice:.1f}% |")
+    L.append("")
+    L.append("These are the bars the GP needs to beat.")
     L.append("")
     L.append("## Pareto front (mid-latitude row slice)")
     L.append("")
-    L.append("| Cx | TRAIN loss | rel. to var | Tree |")
+    L.append("| Cx | TRAIN loss | rel. to slice var | Tree |")
     L.append("|---|---|---|---|")
     for c in front:
-        rel = c.train_loss / var_dT if var_dT > 0 else float("nan")
+        rel = c.train_loss / var_dT_slice if var_dT_slice > 0 else float("nan")
         tree_str = str(c.tree)
         if len(tree_str) > 140:
             tree_str = tree_str[:137] + "..."
@@ -199,16 +275,28 @@ def write_report(front, cfg, runtime, oracle, T_shape, year, lats, lons,
         L.append(f"`{best.tree}`")
         L.append("")
         L.append(f"- complexity = {best.complexity}")
-        L.append(f"- loss = {best.train_loss:.4g} ({100*best.train_loss/var_dT:.1f}% of target var)")
+        L.append(f"- loss = {best.train_loss:.4g} "
+                 f"({100*best.train_loss/var_dT_slice:.1f}% of slice var)")
         L.append(f"- Measure2Ds used: {measure_2d_summary(best.tree)}")
 
-        # Compare best to oracle ceiling
-        oracle_best = min(oracle['mse_newton'], oracle['mse_diff'], oracle['mse_ar1'])
-        verdict = ("✓ BEATS best oracle baseline"
-                   if best.train_loss < oracle_best
-                   else "✗ does NOT beat best oracle baseline (AR(1) or diffusion)")
-        L.append(f"- vs oracles: {verdict} "
-                 f"(best oracle MSE = {oracle_best:.4g})")
+        # Compare best to slice oracle ceiling (apples-to-apples)
+        oracle_best = min(oracle_slice['mse_newton'],
+                          oracle_slice['mse_diff'],
+                          oracle_slice['mse_ar1'])
+        oracle_best_name = min(
+            [('Newton', oracle_slice['mse_newton']),
+             ('diff_1D', oracle_slice['mse_diff']),
+             ('AR(1)', oracle_slice['mse_ar1'])],
+            key=lambda kv: kv[1],
+        )[0]
+        if best.train_loss < oracle_best:
+            verdict = (f"BEATS best slice oracle ({oracle_best_name}, "
+                       f"MSE={oracle_best:.4g}) by "
+                       f"{100*(1 - best.train_loss/oracle_best):.1f}%")
+        else:
+            verdict = (f"does NOT beat best slice oracle ({oracle_best_name}, "
+                       f"MSE={oracle_best:.4g})")
+        L.append(f"- vs slice oracles: {verdict}")
 
     L.append("")
     L.append("## Notes")
@@ -218,12 +306,8 @@ def write_report(front, cfg, runtime, oracle, T_shape, year, lats, lons,
     L.append("- The slice-based formulation (mid-lat row) is the cheapest way to "
              "exercise 2D measures; full grid would need either a 3D FunctionalOp "
              "or flattened (Y,X) → 1D spatial.")
-    L.append("- **Caveat on the comparison:** oracles are OLS-fit on the FULL "
-             "grid (var ≈ {:.3g} K²/day²); the GP sees only the mid-latitude row "
-             "(slice var ≈ 10.4 K²/day²). The GP's absolute MSE (9.31) is lower "
-             "than the best linear oracle's full-grid MSE (9.45), so the win is "
-             "real, but apples-to-apples would require fitting oracles on the same "
-             "slice — small refinement deferred.".format(var_dT))
+    L.append("- Slice oracles are computed on the SAME (T, X) array the GP sees, "
+             "so the verdict above is apples-to-apples.")
     L.append("- For ERA5 (0.25° resolution, 3-hourly), supply a CDS API key and "
              "swap `load_ncep_t2m` for an ERA5 retrieve; the rest is unchanged.")
     out_path.write_text("\n".join(L), encoding="utf-8")
@@ -281,7 +365,21 @@ def main(argv=None) -> int:
         fill_warmup=0.0,
         verbose=True,
     )
-    front, runtime = run_gp_2d(T, dt_T, cfg, oracle["var_dT"])
+    front, runtime, T_slice = run_gp_2d(T, dt_T, cfg, oracle["var_dT"])
+
+    # ---- Slice-level oracles (apples-to-apples with GP) ----
+    oracle_slice = compute_oracle_baselines_on_slice(T_slice)
+    print(f"[oracle/slice] zero:   MSE={oracle_slice['mse_zero']:.4g}  "
+          f"({100*oracle_slice['mse_zero']/oracle_slice['var_dT']:.1f}% of slice var)")
+    print(f"[oracle/slice] Newton: MSE={oracle_slice['mse_newton']:.4g}  "
+          f"({100*oracle_slice['mse_newton']/oracle_slice['var_dT']:.1f}%, "
+          f"a={oracle_slice['alpha_newton']:+.4g})")
+    print(f"[oracle/slice] diff1D: MSE={oracle_slice['mse_diff']:.4g}  "
+          f"({100*oracle_slice['mse_diff']/oracle_slice['var_dT']:.1f}%, "
+          f"a={oracle_slice['alpha_diff']:+.4g})")
+    print(f"[oracle/slice] AR(1):  MSE={oracle_slice['mse_ar1']:.4g}  "
+          f"({100*oracle_slice['mse_ar1']/oracle_slice['var_dT']:.1f}%, "
+          f"b={oracle_slice['beta_ar1']:+.4g})")
 
     print()
     print("=" * 70)
@@ -298,7 +396,8 @@ def main(argv=None) -> int:
 
     # ---- Report ----
     out = Path(__file__).parent / "results" / "weather_pde_rediscovery.md"
-    write_report(front, cfg, runtime, oracle, T.shape, args.year, lats, lons, out)
+    write_report(front, cfg, runtime, oracle, oracle_slice, T.shape,
+                 args.year, lats, lons, out)
     return 0
 
 
