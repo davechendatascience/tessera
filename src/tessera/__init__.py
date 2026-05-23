@@ -25,6 +25,10 @@ from .expression import (  # noqa: F401
     Functional, LinearFunctional, SeparableBilinear, Volterra2,
     apply_with_cache,
 )
+from .backend import (  # noqa: F401
+    Backend, NumpyBackend, JaxBackend,
+    set_backend, get_backend, current,
+)
 
 __all__ = [
     "__version__",
@@ -34,4 +38,7 @@ __all__ = [
     "FunctionalCache",
     "Functional", "LinearFunctional", "SeparableBilinear", "Volterra2",
     "apply_with_cache",
+    # Backend
+    "Backend", "NumpyBackend", "JaxBackend",
+    "set_backend", "get_backend", "current",
 ]

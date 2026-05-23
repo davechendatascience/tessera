@@ -6,6 +6,41 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (CPU/GPU backend abstraction)
+- **`tessera.backend` module** — switchable CPU/GPU backend with a
+  clean public API:
+    `set_backend("numpy")` (default; fully functional)
+    `set_backend("jax")` (skeleton; raises informative ImportError
+                          if jax isn't installed)
+    `current().asarray(x)` / `current().convolve(a, v)` etc.
+  - `Backend` Protocol defining the minimum interface
+  - `NumpyBackend` wraps existing numpy + numba paths
+  - `JaxBackend` skeleton: `asarray`, `zeros`, `full_like`, `convolve`
+    work when JAX is installed; tree-walker / measure-apply
+    integration deferred to Tier 1 of the milestone
+  - 12 tests covering both backends + switching API
+  - Top-level re-exports from `tessera.__init__`: `set_backend`,
+    `get_backend`, `current`, `Backend`, `NumpyBackend`, `JaxBackend`
+- **`docs/milestones/gpu_backend.md`** — milestone tracking doc. The
+  public API is committed; internal porting is broken into 4 tiers
+  (measure-apply, tree eval + cache, batched eval, benchmarks)
+  totaling ~8-10 days of focused work. Lists acceptance criteria,
+  effort estimates, sequencing recommendations, and dependencies
+  on other milestones.
+
+### Added (reduce ops for invariance via aggregation)
+- **`reduce_mean / reduce_max / reduce_sum / reduce_std`** — new
+  unary ops in `UN_OP_FNS` that collapse an array to a scalar by
+  reducing over all axes. Lets the GP DISCOVER the aggregation rule
+  (mean-pool vs max-pool vs sum vs std) instead of having it
+  hardcoded. Motivated by the MNIST validation experiment
+  (`benchmarks/run_mnist_feature_discovery.py`): the 0.82 test
+  accuracy capped because mean-pool is too crude; max-pool would
+  capture digit-class structure better. Interval bounds: mean/max
+  stay in [input.lo, input.hi]; sum is conservative ±∞ when input
+  spans zero; std bounded by spread. Simplifier folds
+  `reduce_X(Const(c))` → `Const(c)`. 20 new tests.
+
 ### Added (validation experiment)
 - **`benchmarks/run_mnist_feature_discovery.py`** — runs the §12 first
   step from `invariance_in_sr.md`: MNIST 0-vs-rest classification
