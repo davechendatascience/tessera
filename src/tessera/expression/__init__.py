@@ -37,6 +37,14 @@ from .tree import (
     BIN_OPS, UN_OPS, BIN_OP_FNS, UN_OP_FNS,
     complexity, depth, used_features, iter_subtrees, replace_at, evaluate,
 )
+from .mutation import (
+    MAX_DEPTH, MAX_COMPLEXITY, MAX_CONST_MAGNITUDE,
+    validate_tree,
+    random_measure, random_functional, random_tree,
+    subtree_swap, subtree_crossover, constant_jitter,
+    term_insert, term_delete, op_swap, measure_mutate,
+    OP_WEIGHTS, mutate,
+)
 
 __all__ = [
     # measure
@@ -52,4 +60,11 @@ __all__ = [
     "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "Node",
     "BIN_OPS", "UN_OPS", "BIN_OP_FNS", "UN_OP_FNS",
     "complexity", "depth", "used_features", "iter_subtrees", "replace_at", "evaluate",
+    # mutation
+    "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
+    "validate_tree",
+    "random_measure", "random_functional", "random_tree",
+    "subtree_swap", "subtree_crossover", "constant_jitter",
+    "term_insert", "term_delete", "op_swap", "measure_mutate",
+    "OP_WEIGHTS", "mutate",
 ]
