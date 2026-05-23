@@ -42,6 +42,7 @@ from typing import Callable, Iterator, Union
 import numpy as np
 
 from .functional import Functional, LinearFunctional, SeparableBilinear, Volterra2
+from .measure_2d import Measure2D
 from .cache import FunctionalCache
 
 
@@ -124,7 +125,7 @@ class UnOp:
 
 @dataclass(frozen=True)
 class FunctionalOp:
-    """Apply a Functional (Linear / Bilinear / Volterra2) to argument node(s).
+    """Apply a 1-D Functional (Linear / Bilinear / Volterra2) to argument node(s).
 
     The functional's `n_inputs` must match `len(args)`. Constructors check
     this immediately (so malformed trees fail fast).
@@ -145,8 +146,27 @@ class FunctionalOp:
         return f"{self.functional}({args_str})"
 
 
+@dataclass(frozen=True)
+class FunctionalOp2D:
+    """Apply a Measure2D to a single 2-D argument.
+
+    Used in PDE-discovery trees where the input env contains 2-D fields
+    U(t, x) instead of (or alongside) 1-D series. Pointwise ops
+    (BinOp/UnOp) broadcast naturally across the 2-D arrays.
+
+    The single-argument constraint reflects that 2-D measures are
+    structurally similar to 1-D linear functionals — bilinear /
+    multilinear 2-D ops can be expressed by composition with BinOp/mul.
+    """
+    measure_2d: Measure2D
+    arg: "Node"
+
+    def __str__(self) -> str:
+        return f"M2D[{self.measure_2d}]({self.arg})"
+
+
 # Tagged-union alias
-Node = Union[Var, Const, BinOp, UnOp, FunctionalOp]
+Node = Union[Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D]
 
 
 # ---------------- Structural helpers ----------------
@@ -160,9 +180,9 @@ def complexity(node: Node) -> int:
     if isinstance(node, BinOp):
         return 1 + complexity(node.a) + complexity(node.b)
     if isinstance(node, FunctionalOp):
-        # Functional itself counts as 1; its measures' internal structure is
-        # not added (they're parameters, not subtrees).
         return 1 + sum(complexity(a) for a in node.args)
+    if isinstance(node, FunctionalOp2D):
+        return 1 + complexity(node.arg)
     raise TypeError(type(node))
 
 
@@ -176,6 +196,8 @@ def depth(node: Node) -> int:
         return 1 + max(depth(node.a), depth(node.b))
     if isinstance(node, FunctionalOp):
         return 1 + max(depth(a) for a in node.args)
+    if isinstance(node, FunctionalOp2D):
+        return 1 + depth(node.arg)
     raise TypeError(type(node))
 
 
@@ -193,6 +215,8 @@ def used_features(node: Node) -> set[str]:
         elif isinstance(n, FunctionalOp):
             for a in n.args:
                 visit(a)
+        elif isinstance(n, FunctionalOp2D):
+            visit(n.arg)
 
     visit(node)
     return out
@@ -209,6 +233,8 @@ def iter_subtrees(node: Node) -> Iterator[Node]:
     elif isinstance(node, FunctionalOp):
         for a in node.args:
             yield from iter_subtrees(a)
+    elif isinstance(node, FunctionalOp2D):
+        yield from iter_subtrees(node.arg)
 
 
 def replace_at(root: Node, target_index: int, new_node: Node) -> Node:
@@ -232,6 +258,8 @@ def replace_at(root: Node, target_index: int, new_node: Node) -> Node:
         if isinstance(n, FunctionalOp):
             new_args = tuple(visit(a) for a in n.args)
             return FunctionalOp(n.functional, new_args)
+        if isinstance(n, FunctionalOp2D):
+            return FunctionalOp2D(n.measure_2d, visit(n.arg))
         raise TypeError(type(n))
 
     return visit(root)
@@ -240,7 +268,7 @@ def replace_at(root: Node, target_index: int, new_node: Node) -> Node:
 # ---------------- Evaluation ----------------
 
 def _maybe_broadcast(v, n: int) -> np.ndarray:
-    """If v is a scalar, broadcast to a length-n array. Else return as-is."""
+    """If v is a scalar, broadcast to a length-n array (1-D). Else return as-is."""
     if np.isscalar(v):
         return np.full(n, float(v), dtype=np.float64)
     return np.asarray(v, dtype=np.float64)
@@ -303,7 +331,8 @@ def evaluate(
         # Resolve arg arrays (broadcasting scalars). Need a length, so peek
         # the env or compute one arg first.
         any_var_name = next(iter(env))
-        n = len(env[any_var_name])
+        any_val = env[any_var_name]
+        n = any_val.shape[-1] if any_val.ndim == 1 else any_val.shape[0]
 
         arg_arrays: list[np.ndarray] = []
         arg_ids: list[str] = []
@@ -323,11 +352,33 @@ def evaluate(
         else:
             return node.functional.apply(*arg_arrays, fill_warmup=fill_warmup)
 
+    if isinstance(node, FunctionalOp2D):
+        # The argument must evaluate to a 2-D array (T, X). The Measure2D
+        # apply runs the atomic shift-and-accumulate + the separable
+        # density along each axis.
+        val = evaluate(node.arg, env, cache, fill_warmup=fill_warmup)
+        arr = np.asarray(val, dtype=np.float64)
+        if arr.ndim == 0:
+            # Scalar broadcast — get the env shape from any 2-D Var
+            for v in env.values():
+                if np.ndim(v) == 2:
+                    arr = np.full(v.shape, float(arr), dtype=np.float64)
+                    break
+            else:
+                raise ValueError(
+                    "FunctionalOp2D: arg is scalar and no 2-D field in env to broadcast to"
+                )
+        if arr.ndim != 2:
+            raise ValueError(
+                f"FunctionalOp2D: arg must evaluate to a 2-D array, got shape {arr.shape}"
+            )
+        return node.measure_2d.apply(arr, fill_warmup=fill_warmup)
+
     raise TypeError(f"unknown node type {type(node)}")
 
 
 __all__ = [
-    "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "Node",
+    "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "FunctionalOp2D", "Node",
     "BIN_OPS", "UN_OPS",
     "BIN_OP_FNS", "UN_OP_FNS",
     "complexity", "depth", "used_features", "iter_subtrees", "replace_at",

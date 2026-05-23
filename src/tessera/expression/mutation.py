@@ -42,11 +42,16 @@ from .measure import (
     measure_power_law, measure_signed_sum,
     DENSITY_FAMILIES,
 )
+from .measure_2d import (
+    Measure2D, Atom2D,
+    measure_2d_atomic, measure_2d_separable,
+    measure_2d_laplacian_5pt, measure_2d_diff_t, measure_2d_grad_x,
+)
 from .functional import (
     Functional, LinearFunctional, SeparableBilinear, Volterra2,
 )
 from .tree import (
-    Var, Const, BinOp, UnOp, FunctionalOp, Node,
+    Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D, Node,
     BIN_OPS, UN_OPS, complexity, depth, used_features, iter_subtrees, replace_at,
 )
 
@@ -120,6 +125,37 @@ def random_measure(rng: random.Random) -> Measure:
     return measure_signed_sum(weights_and_lags)
 
 
+def random_measure_2d(rng: random.Random) -> Measure2D:
+    """Sample a random 2-D measure for use in FunctionalOp2D nodes.
+
+    The mixture is biased toward PDE-discovery primitives — Laplacian,
+    grad_x, diff_t, and small custom atomic stencils — but also includes
+    separable-density combinations.
+    """
+    r = rng.random()
+    if r < 0.30:
+        return measure_2d_laplacian_5pt()
+    if r < 0.45:
+        return measure_2d_grad_x()
+    if r < 0.60:
+        return measure_2d_diff_t(lag_t=rng.choice([1, 2, 3, 6, 24]))
+    if r < 0.80:
+        # Separable density: 1-D measure along time × 1-D along space
+        return measure_2d_separable(
+            measure_t=random_measure(rng),
+            measure_x=random_measure(rng),
+        )
+    # Small custom atomic stencil — 2-5 atoms at small lags
+    n_atoms = rng.randint(2, 5)
+    atoms = []
+    for _ in range(n_atoms):
+        w = round(rng.uniform(-1.5, 1.5), 4)
+        lt = rng.choice([0, 0, 0, 1, 2])     # time mostly 0 for spatial ops
+        lx = rng.choice([-2, -1, 0, 0, +1, +2])
+        atoms.append((w, lt, lx))
+    return measure_2d_atomic(atoms)
+
+
 def random_functional(rng: random.Random) -> Functional:
     """Sample a random Functional: 50% Linear, 25% Bilinear, 25% Volterra2."""
     r = rng.random()
@@ -147,6 +183,7 @@ def random_tree(
     unop_prob: float = 0.20,
     binop_prob: float = 0.45,
     funcop_prob: float = 0.25,
+    enable_2d: bool = False,
 ) -> Node:
     """Generate a random tree with bounded depth.
 
@@ -154,11 +191,14 @@ def random_tree(
     binop_prob, funcop_prob) must sum to 1 (we normalise if not).
     At depth = max_depth, only leaves are generated.
 
-    The total probability is split — at max depth, we pick a leaf (Var or
-    Const, 50/50).
+    Parameters
+    ----------
+    enable_2d : bool
+        If True, the funcop_prob branch chooses between FunctionalOp (1-D)
+        and FunctionalOp2D (2-D) with 50/50 odds. The caller is responsible
+        for ensuring the env passed to evaluate() is 2-D-compatible.
     """
     if max_depth <= 1:
-        # Leaf: 80% var, 20% const (vars are more useful)
         if rng.random() < 0.80:
             return _random_var(rng, feature_names)
         return _random_const(rng)
@@ -167,7 +207,6 @@ def random_tree(
     leaf_p = leaf_prob / total
     unop_p = unop_prob / total
     binop_p = binop_prob / total
-    # funcop = the remainder
 
     r = rng.random()
     if r < leaf_p:
@@ -177,20 +216,26 @@ def random_tree(
 
     if r < leaf_p + unop_p:
         op = rng.choice(UN_OPS)
-        return UnOp(op, random_tree(rng, feature_names, max_depth=max_depth - 1))
+        return UnOp(op, random_tree(rng, feature_names, max_depth=max_depth - 1,
+                                    enable_2d=enable_2d))
 
     if r < leaf_p + unop_p + binop_p:
         op = rng.choice(BIN_OPS)
         return BinOp(
             op,
-            random_tree(rng, feature_names, max_depth=max_depth - 1),
-            random_tree(rng, feature_names, max_depth=max_depth - 1),
+            random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d),
+            random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d),
         )
 
-    # FunctionalOp
+    # FunctionalOp branch — choose 1-D or 2-D
+    if enable_2d and rng.random() < 0.5:
+        m2d = random_measure_2d(rng)
+        arg = random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d)
+        return FunctionalOp2D(m2d, arg)
+
     fn = random_functional(rng)
     args = tuple(
-        random_tree(rng, feature_names, max_depth=max_depth - 1)
+        random_tree(rng, feature_names, max_depth=max_depth - 1, enable_2d=enable_2d)
         for _ in range(fn.n_inputs)
     )
     return FunctionalOp(fn, args)
@@ -306,6 +351,21 @@ def op_swap(tree: Node, rng: random.Random) -> Node:
     return replace_at(tree, idx, UnOp(new_op, sub.a))
 
 
+def measure_2d_mutate(tree: Node, rng: random.Random) -> Node:
+    """Inside a FunctionalOp2D, replace the wrapped Measure2D with a new
+    random one. Companion to measure_mutate, for PDE-discovery trees."""
+    candidates = [
+        (i, s) for i, s in enumerate(iter_subtrees(tree))
+        if isinstance(s, FunctionalOp2D)
+    ]
+    if not candidates:
+        return tree
+    idx, sub = rng.choice(candidates)
+    assert isinstance(sub, FunctionalOp2D)
+    new_m2d = random_measure_2d(rng)
+    return replace_at(tree, idx, FunctionalOp2D(new_m2d, sub.arg))
+
+
 def measure_mutate(tree: Node, rng: random.Random) -> Node:
     """Inside a FunctionalOp, replace the wrapped measure(s) with new
     random ones.
@@ -355,13 +415,14 @@ def measure_mutate(tree: Node, rng: random.Random) -> Node:
 # ---------------- Top-level dispatcher ----------------
 
 OP_WEIGHTS = {
-    "subtree_swap":      0.20,
-    "subtree_crossover": 0.20,
-    "constant_jitter":   0.15,
-    "term_insert":       0.10,
-    "term_delete":       0.10,
-    "op_swap":           0.10,
-    "measure_mutate":    0.15,
+    "subtree_swap":       0.20,
+    "subtree_crossover":  0.20,
+    "constant_jitter":    0.15,
+    "term_insert":        0.10,
+    "term_delete":        0.10,
+    "op_swap":            0.10,
+    "measure_mutate":     0.10,
+    "measure_2d_mutate":  0.05,
 }
 
 
@@ -401,6 +462,8 @@ def mutate(
                 child = op_swap(parents[0], rng)
             elif op_name == "measure_mutate":
                 child = measure_mutate(parents[0], rng)
+            elif op_name == "measure_2d_mutate":
+                child = measure_2d_mutate(parents[0], rng)
             else:
                 continue
         except Exception:
@@ -413,8 +476,8 @@ def mutate(
 __all__ = [
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",
-    "random_measure", "random_functional", "random_tree",
+    "random_measure", "random_measure_2d", "random_functional", "random_tree",
     "subtree_swap", "subtree_crossover", "constant_jitter",
-    "term_insert", "term_delete", "op_swap", "measure_mutate",
+    "term_insert", "term_delete", "op_swap", "measure_mutate", "measure_2d_mutate",
     "OP_WEIGHTS", "mutate",
 ]

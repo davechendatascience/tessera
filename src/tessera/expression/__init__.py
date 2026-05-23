@@ -33,16 +33,16 @@ from .functional import (
     apply_with_cache,
 )
 from .tree import (
-    Var, Const, BinOp, UnOp, FunctionalOp, Node,
+    Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D, Node,
     BIN_OPS, UN_OPS, BIN_OP_FNS, UN_OP_FNS,
     complexity, depth, used_features, iter_subtrees, replace_at, evaluate,
 )
 from .mutation import (
     MAX_DEPTH, MAX_COMPLEXITY, MAX_CONST_MAGNITUDE,
     validate_tree,
-    random_measure, random_functional, random_tree,
+    random_measure, random_measure_2d, random_functional, random_tree,
     subtree_swap, subtree_crossover, constant_jitter,
-    term_insert, term_delete, op_swap, measure_mutate,
+    term_insert, term_delete, op_swap, measure_mutate, measure_2d_mutate,
     OP_WEIGHTS, mutate,
 )
 from .gp import (
@@ -66,15 +66,15 @@ __all__ = [
     "Functional", "LinearFunctional", "SeparableBilinear", "Volterra2",
     "apply_with_cache",
     # tree
-    "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "Node",
+    "Var", "Const", "BinOp", "UnOp", "FunctionalOp", "FunctionalOp2D", "Node",
     "BIN_OPS", "UN_OPS", "BIN_OP_FNS", "UN_OP_FNS",
     "complexity", "depth", "used_features", "iter_subtrees", "replace_at", "evaluate",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",
-    "random_measure", "random_functional", "random_tree",
+    "random_measure", "random_measure_2d", "random_functional", "random_tree",
     "subtree_swap", "subtree_crossover", "constant_jitter",
-    "term_insert", "term_delete", "op_swap", "measure_mutate",
+    "term_insert", "term_delete", "op_swap", "measure_mutate", "measure_2d_mutate",
     "OP_WEIGHTS", "mutate",
     # gp
     "GPConfig", "Candidate", "GP", "mse_loss", "pareto_front",

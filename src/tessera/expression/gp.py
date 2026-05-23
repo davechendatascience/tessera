@@ -75,6 +75,12 @@ class GPConfig:
     fill_warmup: float = 0.0   # zero-fill warmup rows during eval
     cache_mem_size: int = 4096
     verbose: bool = True
+    # 2-D / PDE mode
+    enable_2d: bool = False
+    """If True, random_tree generates FunctionalOp2D nodes (for PDE-style
+    search over 2-D fields). The caller is responsible for env having
+    2-D arrays as values."""
+
     # Multiprocessing
     n_workers: int = 1
     """1 = sequential (no MP); >1 spawns a ProcessPoolExecutor.
@@ -333,7 +339,11 @@ class GP:
         max_attempts = self.cfg.pop_size * 10
         while len(pop) < self.cfg.pop_size and attempts < max_attempts:
             attempts += 1
-            tree = random_tree(self.rng, feature_names, max_depth=self.cfg.init_max_depth)
+            tree = random_tree(
+                self.rng, feature_names,
+                max_depth=self.cfg.init_max_depth,
+                enable_2d=self.cfg.enable_2d,
+            )
             if validate_tree(tree, set(feature_names)) is not None:
                 continue
             pop.append(self._score(tree, env, y_true, born_gen=0))
