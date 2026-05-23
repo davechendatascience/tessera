@@ -38,6 +38,7 @@ from .scoring import _evaluate_tree
 from .pareto import pareto_front
 from .const_opt import optimize_constants
 from .hall_of_fame import HallOfFame
+from .bounds import mse_lower_bound, pareto_threshold
 from .gp import GP, GPConfig
 from .sa import SimulatedAnnealing, SAConfig
 from .random_search import RandomSearch, RSConfig
@@ -49,6 +50,7 @@ __all__ = [
     "pnl_loss_hard", "pnl_loss_smooth",
     "pareto_front", "optimize_constants",
     "HallOfFame",
+    "mse_lower_bound", "pareto_threshold",
     # Searchers
     "GP", "GPConfig",
     "SimulatedAnnealing", "SAConfig",

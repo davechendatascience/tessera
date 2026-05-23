@@ -46,6 +46,10 @@ import numpy as np
 from tessera.expression.cache import FunctionalCache
 from tessera.expression.tree import Node, complexity
 from tessera.expression.simplify import simplify_canonical as simplify
+from tessera.expression.interval import (
+    interval_evaluate, env_intervals_from_arrays,
+)
+from .bounds import mse_lower_bound, pareto_threshold
 from tessera.expression.mutation import (
     mutate, random_tree, validate_tree,
 )
@@ -142,6 +146,25 @@ class GPConfig:
     entries. Raised from 0.5 to 0.9 in v0.1.2 to close the
     (x-x)/(x-x) divide-by-zero pathology."""
 
+    # Branch-and-bound pruning (interval arithmetic)
+    prune_by_lower_bound: bool = False
+    """If True, before full evaluation, compute an interval-arithmetic
+    bound on the candidate's predictions and a corresponding MSE loss
+    lower bound. If the bound exceeds the Pareto-front loss at the
+    candidate's complexity, skip full evaluation.
+
+    Only MSE bounds are supported currently; other loss functions
+    (PnL+flip, etc.) get no pruning even with this flag on. Trees
+    containing FunctionalOp / FunctionalOp2D get loose bounds
+    (interval evaluator is conservative on functionals); pruning is
+    most effective on pure pointwise trees.
+
+    Default off because the tight-fit case (where pruning matters
+    most) typically already has a low-loss incumbent; the bound is
+    rarely tighter than just running the eval. Turn on for SR tasks
+    with large parsimony gap between cx levels.
+    """
+
 
 # ---------------- Worker-side helpers for multiprocessing ----------------
 #
@@ -223,6 +246,10 @@ class GP:
         self.cache = FunctionalCache(mem_size=self.cfg.cache_mem_size)
         self.history: list[dict] = []
         self.hall_of_fame = HallOfFame()
+        # Branch-and-bound state. Populated in run() if pruning is enabled.
+        self._env_intervals: dict = {}
+        self._current_front: list[Candidate] = []
+        self.prune_stats = dict(n_pruned=0, n_evaluated=0)
         self._stop_requested = False
         self._pool: ProcessPoolExecutor | None = None
 
@@ -250,6 +277,17 @@ class GP:
                           self.cfg.simplify_trees),
             )
 
+        # Branch-and-bound: enable only with mse_loss + n_workers=1 +
+        # the config flag. Pruning the worker path is harder (workers
+        # don't see the parent's Pareto front); deferred.
+        if (self.cfg.prune_by_lower_bound
+            and self.loss_fn is mse_loss
+            and self.cfg.n_workers == 1):
+            self._env_intervals = env_intervals_from_arrays(env)
+        else:
+            self._env_intervals = {}
+        self.prune_stats = dict(n_pruned=0, n_evaluated=0)
+
         pop = self._init_population(feature_names, env, y_true)
         self.hall_of_fame.update_many(pop)
         front = pareto_front(pop)
@@ -264,6 +302,10 @@ class GP:
                 if self.cfg.verbose:
                     print(f"[gp] stop requested at gen {gen}, exiting")
                 break
+
+            # Expose the current Pareto front to _score so it can prune
+            # using the pareto_threshold.
+            self._current_front = front
 
             t_gen = time.time()
             offspring = self._breed(pop, feature_names, env, y_true, gen)
@@ -334,6 +376,28 @@ class GP:
         if self.cfg.simplify_trees:
             tree = simplify(tree)
         cx = complexity(tree)
+
+        # Branch-and-bound prune: cheap interval-arithmetic bound +
+        # MSE lower bound + Pareto threshold check. Sound: a pruned
+        # candidate provably can't beat the current front at its cx.
+        if self._env_intervals and self._current_front:
+            try:
+                pred_iv = interval_evaluate(tree, self._env_intervals)
+                if pred_iv.lo > -float("inf") or pred_iv.hi < float("inf"):
+                    lb = mse_lower_bound(pred_iv.lo, pred_iv.hi, y_true)
+                    threshold = pareto_threshold(self._current_front, cx)
+                    if lb >= threshold:
+                        self.prune_stats["n_pruned"] += 1
+                        return Candidate(
+                            tree=tree, train_loss=float("inf"),
+                            complexity=cx, fitness=float("inf"),
+                            born_gen=born_gen,
+                        )
+            except Exception:
+                # Interval eval failing is non-fatal; just fall through.
+                pass
+
+        self.prune_stats["n_evaluated"] += 1
         loss = _evaluate_tree(
             tree, env, y_true, self.cache,
             fill_warmup=self.cfg.fill_warmup,
