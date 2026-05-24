@@ -6,6 +6,36 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (axis-semantic type system, scoped minimum)
+- **`tessera.expression.axes`** — first step toward
+  `invariance_in_sr.md`'s axis architecture, scoped as a minimum
+  useful addition. Lives inside `tessera.expression` (not a
+  top-level submodule) because it depends entirely on expression's
+  tree types and doesn't introduce new mathematical primitives.
+  Components:
+    `Invariance` enum (TRANSLATION, CAUSAL_TRANSLATION, PERMUTATION,
+                       CYCLIC, LOG_TRANSLATION, ROTATION, GRAPH, NONE)
+    `Axis(name, size, invariance)` — declares one variable dimension
+    `TypedVar(name, axes=(...,))` — Var + axis-tuple metadata
+    `OperatorAxisRule` + `OPERATOR_RULES` table — per-operator
+                                                  axis-compatibility rules
+    `check_compatibility(tree, typed_env)` — non-enforcing checker
+                                              that returns None or an
+                                              error string
+  Covers the common cases:
+    Time series:        `Axis("time", N, CAUSAL_TRANSLATION)`
+    Image:              two axes of TRANSLATION
+    Multi-asset basket: time (CAUSAL_TRANSLATION) + asset (PERMUTATION)
+  19 tests covering construction, all four invariance types, and
+  per-operator compatibility (rejects LinearFunctional on permutation,
+  FunctionalOp2D on 1-D, etc.).
+- **`docs/framework_synthesis.md`** — maps every shipped tessera
+  component to one of SEVEN roles in the Knuth-grounded perfect-info
+  game framework. Answers "how do we integrate Knuth's work with our
+  diverging implementations?" — the answer is the implementations
+  aren't diverging; each fills one of seven slots. The document is
+  the explicit mapping that makes that clear.
+
 ### Added (CPU/GPU backend abstraction)
 - **`tessera.backend` module** — switchable CPU/GPU backend with a
   clean public API:

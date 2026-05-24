@@ -57,6 +57,10 @@ from .measure_2d import (
     measure_2d_laplacian_5pt, measure_2d_diff_t, measure_2d_grad_x,
     measure_2d_sobel_x, measure_2d_sobel_y,
 )
+from .axes import (
+    Invariance, Axis, TypedVar,
+    check_compatibility, OperatorAxisRule, OPERATOR_RULES,
+)
 
 __all__ = [
     # measure
@@ -88,4 +92,7 @@ __all__ = [
     "measure_2d_atomic", "measure_2d_separable",
     "measure_2d_laplacian_5pt", "measure_2d_diff_t", "measure_2d_grad_x",
     "measure_2d_sobel_x", "measure_2d_sobel_y",
+    # axes (axis-semantic type system)
+    "Invariance", "Axis", "TypedVar",
+    "check_compatibility", "OperatorAxisRule", "OPERATOR_RULES",
 ]
