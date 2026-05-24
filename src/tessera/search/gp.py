@@ -424,46 +424,77 @@ class GP:
         return [self._score(t, env, y_true, born_gen=0) for t in trees]
 
     def _score_batch(self, trees, env, y_true, born_gen):
-        """Tier-3 batched scoring. Partitions `trees` into pure-pointwise
-        (eligible for JAX batching) and mixed (per-tree fallback). The
-        pointwise subset is evaluated as one batched JAX call.
+        """Tier-3 batched scoring with cross-tree subexpression caching.
 
-        Returns a list of Candidates in input order. Side-effect-equivalent
-        to calling `_score` per tree, except the batched subset bypasses
-        the FunctionalCache (irrelevant for pointwise trees anyway) and
-        the B&B prune (which is per-tree and not yet batched).
+        Pipeline per generation:
+        1. Simplify trees (canonical form for cache-key matching)
+        2. Materialize shared subtrees: pre-evaluate FunctionalOp / 2D
+           subtrees that appear in >= 2 trees ONCE, bind to synthetic
+           Vars. After this, many trees become pure-pointwise.
+        3. Partition: pure-pointwise (batched JAX) vs mixed (per-tree).
+        4. Batched subset: one vmapped jit call.
+        5. Mixed subset: per-tree numpy path via _score_no_simplify.
+
+        The Candidate stored downstream uses the ORIGINAL (pre-rewrite)
+        tree — materialization is purely an evaluation-time optimisation
+        and must not affect HoF or selection. The rewritten tree is
+        equivalent on `env` but is not the user-facing artefact.
         """
         if self._env_jax is None:
             # Batched eval disabled or not applicable — fall back per-tree
             return [self._score(t, env, y_true, born_gen) for t in trees]
 
-        # Simplify first (matches _score behavior)
+        # Simplify first (matches _score behavior; also normalises trees
+        # so the materialize step's str-based canonical key matches more
+        # subtrees).
         if self.cfg.simplify_trees:
             trees = [simplify(t) for t in trees]
 
-        # Partition: pure-pointwise (batched JAX) vs mixed (per-tree)
-        results: list = [None] * len(trees)
+        # Cross-tree subexpression materialization (the FunctionalCache
+        # bridge into the batched JAX path). Pre-evaluates shared
+        # FunctionalOp/2D subtrees once on the JAX env; returns
+        # rewritten trees that may now be pure-pointwise.
+        from tessera.expression.materialize import materialize_shared_subtrees
+        rewritten, augmented_env_jax, mat_stats = materialize_shared_subtrees(
+            trees, self._env_jax, threshold=2,
+        )
+        self.prune_stats.setdefault("materialized", 0)
+        self.prune_stats.setdefault("substitutions", 0)
+        self.prune_stats["materialized"] += mat_stats["n_materialized"]
+        self.prune_stats["substitutions"] += mat_stats["n_replacements"]
+
+        # Partition the REWRITTEN trees (not the originals): after
+        # materialization, many trees that contained FunctionalOp are
+        # now pure-pointwise and eligible for batched eval.
+        results: list = [None] * len(rewritten)
         batch_idx: list[int] = []
-        for i, t in enumerate(trees):
+        for i, t in enumerate(rewritten):
             if is_pure_pointwise(t):
                 batch_idx.append(i)
 
-        # Per-tree fallback for mixed trees (FunctionalOp etc.)
-        for i, t in enumerate(trees):
-            if i not in set(batch_idx):
-                # _score already simplifies; pass simplified tree, set flag
-                results[i] = self._score_no_simplify(t, env, y_true, born_gen)
+        # Per-tree fallback for still-mixed trees. Pass the ORIGINAL
+        # (pre-materialization) tree + the original env, since the
+        # numpy _score path doesn't know about synthetic Vars.
+        non_batch = set(range(len(rewritten))) - set(batch_idx)
+        for i in non_batch:
+            results[i] = self._score_no_simplify(
+                trees[i], env, y_true, born_gen
+            )
 
         if not batch_idx:
             return results
 
-        # Batched JAX eval
+        # Batched JAX eval on the augmented env (original vars +
+        # synthetic _cached_* vars from materialization).
         import jax.numpy as jnp
-        batch_trees = [trees[i] for i in batch_idx]
-        cxs = [complexity(t) for t in batch_trees]
+        batch_trees = [rewritten[i] for i in batch_idx]
+        # Complexity is reported from the ORIGINAL tree (the user-facing
+        # artefact), not the rewritten one.
+        cxs = [complexity(trees[i]) for i in batch_idx]
 
+        var_names = tuple(augmented_env_jax.keys())
         preds = evaluate_population_stacked(
-            batch_trees, self._env_jax, var_names=self._feature_names_tuple
+            batch_trees, augmented_env_jax, var_names=var_names
         )                                                     # [K, N]
         # NaN-safe MSE per row + min_valid_frac filter
         finite = jnp.isfinite(preds)

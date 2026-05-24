@@ -1,0 +1,130 @@
+C:\Users\ychen\OneDrive\文件\GitHub\tessera\src\tessera\search\losses.py:40: RuntimeWarning: overflow encountered in square
+  return float(np.mean(err ** 2))
+C:\Users\ychen\OneDrive\文件\GitHub\tessera\benchmarks\run_feynman_extended.py:198: RuntimeWarning: invalid value encountered in arcsin
+  return {"n": nn, "theta2": th2}, np.arcsin(nn * np.sin(th2))
+=== Feynman extended (~30 eqs) on tessera ===
+GP config: pop=400, gens=120, pointwise_only=True
+
+[I.6.20a]  exp(-theta^2/2)  (expected=True)
+  cx= 7  loss=6.999e-05  rel=0.0010  (3.2s)
+    pow(tanh(tanh((0.847232 / theta))), theta)
+
+[I.6.20]  exp(-(theta/sigma)^2/2)  (expected=True)
+  cx=11  loss=2.817e-16  rel=0.0000  (2.6s)
+    pow(pow(-0.606531, (theta / sigma)), (theta / max(0.175903, sigma)))
+
+[I.8.14]  sqrt((x2-x1)^2+(y2-y1)^2)  (expected=True)
+  cx=15  loss=0.07113  rel=0.2954  (2.1s)
+    ((max((0.24031 - x1), (y2 >= -1.46241)) - (y1 * y2)) - (x1 * x2))
+
+[I.9.18]  G*m1*m2/((x2-x1)^2+(y2-y1)^2+(z2-z1)^2)  (expected=False)
+  cx=25  loss=0.003723  rel=0.2614  (8.6s)
+    (((tanh(G) / x2) + (max(0.288569, pow((G * m1), (max(y1, z1) - (z1 >= y2)))) / exp(y2))) - pow(0.206276, m2))
+
+[I.10.7]  m0/sqrt(1-v^2/c^2)  (expected=True)
+  cx= 5  loss=0.004384  rel=0.0031  (0.6s)
+    (m0 + (v * v))
+
+[I.11.19]  x1*y1+x2*y2+x3*y3  (expected=True)
+  cx=22  loss=11.57  rel=0.1459  (4.5s)
+    ((((((-2.71606 + x2) + x2) + x3) + x3) + (x2 - y3)) + ((y1 * y2) - neg((x1 * y3))))
+
+[I.12.1]  mu*Nn  (expected=True)
+  cx= 3  loss=0  rel=0.0000  (0.8s)
+    (Nn * mu)
+
+[I.12.2]  q1*q2/(4*pi*eps*r^2)  (expected=False)
+  cx=11  loss=0.002067  rel=0.2656  (2.7s)
+    ((pow(r, (-6.35691 + q2)) / eps) - min(-0.011353, r))
+
+[I.12.4]  q1*q2/(4*pi*eps*r^2)  (expected=False)
+  cx=25  loss=0.001595  rel=0.1942  (3.3s)
+    exp(min(((q2 / (q1 >= r)) - (2.30655 + eps)), (exp(min((1.15306 - r), ((q1 - r) - (eps + r)))) - r)))
+
+[I.12.5]  q1*q2/r^2  (expected=True)
+  cx= 7  loss=1.108e-31  rel=0.0000  (1.8s)
+    ((q1 / (r / q2)) / r)
+
+[I.12.11]  q*(Ef+B*v*sin(theta))  (expected=False)
+  cx=28  loss=108.3  rel=0.3227  (4.5s)
+    ((((tanh(Ef) + (8.67512 * q)) + (B * v)) + ((B * theta) * (Ef - theta))) + (((B * theta) * (v - theta)) - 18.4546))
+
+[I.14.3]  m*g*z  (expected=True)
+  cx=19  loss=16.91  rel=0.0454  (3.7s)
+    ((((g * z) + (min(g, z) * pow(m, 1.79257))) - (m - g)) - (m / z))
+
+[I.14.4]  0.5*k*x^2  (expected=True)
+  cx=14  loss=1.371  rel=0.0087  (3.0s)
+    (((x * (k + log(pow(x, k)))) - k) - (1.69866 <= x))
+
+[I.15.3t]  (x-u*t)/sqrt(1-u^2/c^2)  (expected=True)
+  cx= 9  loss=0.002984  rel=0.0018  (1.3s)
+    ((x - (t * u)) - (-0.154723 * u))
+
+[I.16.6]  (u+v)/(1+u*v/c^2)  (expected=True)
+  cx= 9  loss=0.0002432  rel=0.0117  (1.7s)
+    ((u + v) - ((u * v) * v))
+
+[I.18.4]  (m1*r1+m2*r2)/(m1+m2)  (expected=True)
+  cx=12  loss=0.1076  rel=0.1452  (2.2s)
+    (min(reduce_mean(m2), tanh(r1)) + log(max(0.043536, (r1 * r2))))
+
+[I.24.6]  0.5*m*(omega^2+omega0^2)*x^2  (expected=True)
+  cx=20  loss=8842  rel=0.0768  (5.7s)
+    ((omega0 * (((m * x) - m) / 0.063235)) + (pow(x, omega) * min(min(0.446469, log(m)), 1)))
+
+[I.25.13]  q/C  (expected=True)
+  cx= 3  loss=0  rel=0.0000  (0.8s)
+    (q / C)
+
+[I.26.2]  arcsin(n*sin(theta2))  (expected=False)
+  cx=17  loss=0.001638  rel=nan  (1.4s)
+    ((theta2 * pow(n, n)) + (max(n, (n < theta2)) < max(-0.00580758, (n * theta2))))
+
+[I.27.6]  d1*d2/(d1+d2)  (expected=True)
+  cx=14  loss=0.01402  rel=0.0722  (3.1s)
+    (log((min(d1, d2) + min(d2, (d1 - (d2 < d1))))) - 0.0756316)
+
+[I.29.4]  omega/c  (expected=True)
+  cx= 3  loss=0  rel=0.0000  (0.8s)
+    (omega / c)
+
+[I.30.3]  I0*sin(n*theta/2)^2/sin(theta/2)^2  (expected=False)
+  cx=23  loss=50.55  rel=0.1632  (4.9s)
+    ((((I0 * n) + (I0 * n)) + (n / theta)) + (I0 - pow(((I0 * n) + (I0 * n)), theta)))
+
+[I.32.5]  q^2*a^2/(6*pi*eps*c^3)  (expected=True)
+  cx=20  loss=0.01009  rel=0.0596  (5.1s)
+    abs(((q / pow(c, c)) / ((-1.66875 * eps) / (a - max((a / q), (a > 0.0155282))))))
+
+[I.34.8]  q*v*B/p  (expected=True)
+  cx=19  loss=3.89  rel=0.0411  (4.4s)
+    ((((B + q) / (p / (v + min(min(B, q), v)))) - 1.32223) - (3.26736 - q))
+
+[I.39.22]  n*k*T/V  (expected=True)
+  cx=21  loss=8.985  rel=0.0949  (3.4s)
+    ((((T - 2.67637) + (T - 3.39244)) + (((T + n) + n) / (V / k))) - (n <= 2.71905))
+
+[I.40.1]  n0*exp(-m*g*x/(k*T))  (expected=True)
+  cx=20  loss=0.2622  rel=0.2187  (3.5s)
+    (((x <= 0.50762) + abs(((n0 * ((m >= T) - k)) / (g + k)))) - pow(0.157828, T))
+
+[I.43.31]  k*T/(6*pi*eta*r)  (expected=True)
+  cx=17  loss=0.001687  rel=0.2732  (3.5s)
+    (-0.023436 * (min(k, pow(T, (r <= pow(k, (r <= T))))) / (-0.215705 * eta)))
+
+[I.43.43]  kappa*v^2/(n*sigma)  (expected=True)
+  cx=21  loss=2.664  rel=0.0676  (3.6s)
+    ((kappa - (v - ((v - (sigma - kappa)) * ((v - (sigma - v)) / n)))) - (kappa > sigma))
+
+[I.47.23]  sqrt(gamma*pr/rho)  (expected=True)
+  cx=24  loss=0.02772  rel=0.1541  (3.2s)
+    (reduce_std(gamma) + (min((pr / rho), pow((-1.05324 * min(min(gamma, pr), pr)), (log(rho) < sqrt(gamma)))) / sign(log(rh
+
+[I.48.2]  m*c^2/sqrt(1-v^2/c^2)  (expected=True)
+  cx=17  loss=1.503  rel=0.0200  (4.6s)
+    ((exp(c) + (m * log(pow(min(min(c, m), (c * m)), m)))) - c)
+
+[report] wrote C:\Users\ychen\OneDrive\文件\GitHub\tessera\benchmarks\results\feynman_extended.md
+
+Headline: 9 exact / 14 partial / 7 failed out of 30 equations

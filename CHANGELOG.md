@@ -6,6 +6,72 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (cross-tree subexpression materialization + structural hardening)
+
+The "fewer evals" lever from the perfect-info-game framing (per
+`docs/research/fit_as_perfect_info_game.md` §12). Where Tiers 1-3
+made evals faster, this commit makes there be fewer of them: shared
+subtrees across the population get pre-evaluated once.
+
+**New module: `tessera.expression.materialize`**
+- `materialize_shared_subtrees(trees, env, threshold=2, is_cacheable=,
+  canonical_key=, cache=)`: walks a population, finds subtrees
+  appearing in >= `threshold` trees (counted by `canonical_key`),
+  pre-evaluates each on `env` via the standard `evaluate()` path,
+  binds the result to a synthetic `Var(_cached_k)`, returns
+  rewritten trees + augmented env + diagnostics dict.
+- Designed with explicit extension points:
+    `is_cacheable` — default: FunctionalOp / FunctionalOp2D. Pluggable.
+    `canonical_key` — default: `str(node)`. Future: e-graph orbit-ID.
+    `cache`        — optional dict for cross-call persistence.
+- 12 new tests in `tests/expression/test_materialize.py` covering
+  correctness (rewrite preserves evaluate semantics), edge cases
+  (empty pop, single tree, threshold not met), and all extension
+  points.
+
+**GP integration**: `tessera.search.gp._score_batch` now runs
+materialize as the first step. After materialization, trees that
+were "mixed" (contained FunctionalOp) often become pure-pointwise
+and eligible for Tier-3 batched JAX eval. The Candidate stored
+downstream uses the ORIGINAL tree — materialization is an
+evaluation-time optimisation only.
+
+**Structural hardening: `tests/test_dependency_structure.py`**
+
+Per the user's framing ("framework should stay loose, axiomatic,
+no circular dependencies, anticipate future upgrades"), three new
+tests act as a CI contract:
+
+- `test_no_import_cycles` — fails if any cyclic import appears in
+  tessera.* modules
+- `test_no_backwards_layering_violations` — enforces the layering
+  contract documented in `docs/shipped/dependency_structure.md`
+  (e.g., `tessera.expression.tree` must not import `tessera.search.*`)
+- `test_materialize_does_not_depend_on_search` — specific regression
+  guard for the new module
+
+Includes a documented exception for `tessera.expression.gp` (a
+backward-compat shim that re-exports from `tessera.search.gp`).
+
+**New tooling: `scripts/audit_deps.py`**
+- Prints the full dependency graph + cycle check + depth layering.
+- Run anytime to verify the contract or visualise the structure.
+
+**New doc: `docs/shipped/dependency_structure.md`**
+- Captures the layering contract as a frozen design document.
+- Lists forbidden imports + rationale, the extension-point pattern,
+  the backward-compat-shim exception mechanism, and what's NOT
+  enforced (conventions vs contracts).
+
+**Test count: 486 passing** (was 471; +12 materialize + 3 dependency
+structure).
+
+**Expected impact on the MNIST run**: each generation has 60 trees
+with maybe 3-5 unique FunctionalOp2D subtrees (Laplacian, Sobel,
+etc.). Materialization evaluates each subtree once instead of 60
+times — roughly 12-20× reduction in FunctionalOp compute per gen,
+on top of the Tier-3 35× speedup.
+
 ### Added (2D Measure JAX path — Tier 3-C)
 - **`Measure2D.apply(jax_array)`** routes to a new `_apply_jax` method
   on JAX-array inputs. Faithful jit-friendly rewrite of the numpy path:

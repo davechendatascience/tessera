@@ -73,6 +73,10 @@ from .batched import (
     PopulationEvaluator,
     clear_topo_cache, topo_cache_size,
 )
+from .materialize import (
+    materialize_shared_subtrees,
+    default_is_cacheable, default_canonical_key,
+)
 
 __all__ = [
     # measure
@@ -99,6 +103,9 @@ __all__ = [
     "compile_topology", "evaluate_population", "evaluate_population_stacked",
     "PopulationEvaluator",
     "clear_topo_cache", "topo_cache_size",
+    # materialize (cross-tree subexpression cache; Tier 3-bridge)
+    "materialize_shared_subtrees",
+    "default_is_cacheable", "default_canonical_key",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",
