@@ -134,6 +134,8 @@ Done items previously listed here have been moved to:
 
 | Item | Status | Where |
 |---|---|---|
+| Canonical Knuth Dancing Links (DLX, side track) | ✓ DONE | `tessera.combinatorics.dancing_links` + tests/combinatorics/test_dancing_links.py (27 tests). N-queens N=8 → 92, OEIS A000170 matched n=0..9. Decoupled from SR; dependency-structure check passes trivially. Implementation-budget table in `docs/research/dancing_links_for_sr.md` §4. |
+| Polynomial-basis sufficient statistics (Regime B), Phase 1 | ✓ DONE (P1 only) | `tessera.search.PolynomialMoments` + `monomial_basis`; 21 new tests; 196× speedup at N=10k (3μs flat regardless of N). Phases 2-3 still ▷ IN PROGRESS — see §2.3 above. |
 | Non-monotone parsimony schedule + `climb_then_anneal_parsimony` factory | ✓ DONE | `GPConfig.parsimony_schedule`; `tessera.search.climb_then_anneal_parsimony`; 8 new tests. IK Run 3: GP NOW uses atan2 in 2 of 3 trees (vocab-unused mode closed), but composition is still wrong → next mode "wrong composition with right vocab" target of template mutations. |
 | `atan2`, `acos`, `asin` primitives | ✓ DONE | `tessera.expression.tree.UN_OP_FNS` + `BIN_OP_FNS`; 16 new tests. IK rerun stayed Tier D — vocab fix didn't help (see below). |
 | 3-DoF planar IK benchmark (Tier-D result, both runs) | ✓ DONE | `benchmarks/run_ik_planar_3dof.py` + `benchmarks/results/ik_planar_3dof.md`. Run 2 with atan2/acos/asin: still Tier D. GP doesn't USE the new ops — search-space-explosion failure mode. Documented in `network_sr_and_budget_allocation.md`. |

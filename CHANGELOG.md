@@ -6,6 +6,46 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (side track: canonical Knuth Dancing Links / DLX)
+
+User proposed (2026-05-24) implementing the canonical DLX algorithm as
+a parallel side track to §2.3, with explicit implementation-budget
+tracking as the codebase footprint grows. New top-level subpackage
+`tessera.combinatorics` (depth-0; no SR dependencies).
+
+`tessera.combinatorics.dancing_links` — Knuth Algorithm X via Dancing
+Links (TAOCP Vol 4B §7.2.2; arXiv:cs/0011047):
+  ExactCoverMatrix(matrix, *, primary=None)
+    Toroidal doubly-linked-list representation. O(1) cover/uncover
+    via the "leaves and returns" pointer dance.
+  solve_exact_cover(matrix, *, primary=None) -> generator
+  count_exact_covers(matrix, *, primary=None) -> int
+  nqueens_solutions(n) -> list[tuple[int, ...]]
+  nqueens_count(n) -> int
+
+Secondary-column support included (needed for N-queens diagonals).
+
+Why a side track and not a direct SR integration: see
+`docs/research/dancing_links_for_sr.md`. Short version: DLX in its
+canonical form solves exact-cover, which is not the SR loop's current
+bottleneck. The reason to carry it is pattern fluency + future SR
+application surface (per-node cache + dirty-flag work in §4.3 of
+analytical_delta_loss.md is the direct adaptation). The research note
+includes an explicit implementation-budget table tracking the
+subpackage's footprint, with a 6-month re-audit commitment if no SR
+use materialises.
+
+27 new tests covering: trivial cases (3); known exact-cover problems
+including Knuth's paper example (4); cover/uncover invariant
+preservation under repeated solve (2); N-queens with OEIS A000170
+reference counts for n ∈ {0..9} (10); input validation (3);
+secondary-column semantics (2). N=8 canonical reference: 92 solutions
+✓. Dependency-structure check still passes (no SR coupling).
+
+Implementation-budget footprint added:
+  - `tessera.combinatorics`: new subpackage, 2 files, 436 LOC source
+  - tests/combinatorics/: new test dir, 262 LOC
+
 ### Added (Phase 1 of §2.3: polynomial-basis sufficient statistics, Regime B)
 
 First foundational ship of the analytical-Δloss thread. New module

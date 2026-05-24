@@ -43,6 +43,7 @@ Inside any individual doc, items are flagged with:
 | Engage with Bowery's MDL/AIT critique of MSE-based SR selection | [`research/algorithmic_information_for_sr.md`](research/algorithmic_information_for_sr.md) |
 | Estimate per-benchmark difficulty + the climb-then-simplify path problem | [`research/benchmark_difficulty_and_climb_then_simplify.md`](research/benchmark_difficulty_and_climb_then_simplify.md) |
 | Compute analytical Δloss for symbolic mutations (Knuth + FMM + boosting connections) | [`research/analytical_delta_loss.md`](research/analytical_delta_loss.md) |
+| Read the rationale for the Dancing Links side track + implementation-budget tracking | [`research/dancing_links_for_sr.md`](research/dancing_links_for_sr.md) |
 
 ## Organisational principles
 
