@@ -6,6 +6,85 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (non-monotone parsimony schedule — climb-then-simplify ship)
+
+Per `docs/planned/roadmap.md` §2.3 (now in "Recently shipped"). Tests
+the climb-then-simplify hypothesis from
+`docs/research/benchmark_difficulty_and_climb_then_simplify.md` §2.
+
+**API additions:**
+- `GPConfig.parsimony_schedule: Callable[[int, int], float] | None = None`
+  When set, called as `schedule(current_gen, total_gens) -> float`
+  each generation; the returned value overrides `parsimony` for that
+  gen's fitness term.
+- `tessera.search.climb_then_anneal_parsimony(climb_until=0.3,
+   climb_value=0.0001, final_value=0.005)` — factory returning a
+  schedule that holds parsimony at `climb_value` for the first
+  `climb_until` fraction, then linearly anneals to `final_value`.
+
+**Implementation:**
+- `GP._current_parsimony` instance field; defaults to
+  `cfg.parsimony`. At each generation start, if
+  `cfg.parsimony_schedule is not None`, updated by calling the
+  schedule.
+- All five GP scoring sites (`_score`, `_score_batch`,
+  `_score_no_simplify`, `_polish_pareto_constants`, batched fitness
+  computation) use `self._current_parsimony` instead of the static
+  `self.cfg.parsimony`.
+- Worker (multi-process) path uses static `cfg.parsimony` only —
+  schedules don't propagate (documented limitation).
+
+**8 new tests** in `tests/search/test_parsimony_schedule.py`:
+- Factory behaviour (climb phase constant, anneal endpoints, linear
+  interpolation, zero-n_gens edge case, custom values)
+- GP integration (schedule applied each gen, static parsimony when
+  no schedule, end-to-end smoke that GP still finds signal)
+
+**Empirical result on IK Run 3 (the test of the climb-then-simplify
+hypothesis):**
+
+Three IK runs documented in `benchmarks/results/ik_planar_3dof.md`:
+
+| Run | Vocab | Parsimony | Result | Tier |
+|---|---|---|---|---|
+| 1 | sin/cos/sqrt only | static 0.005 | q1=0.33, q2=0.73, q3=0.35 | D |
+| 2 | + atan2/acos/asin | static 0.005 | q1=0.34, q2=0.78, q3=0.30 | D |
+| 3 | + climb-then-anneal | sched: 0.0001→0.005 | q1=0.35, q2=0.83, q3=0.33 | D |
+
+**Nuanced verdict:** the schedule WORKS in its intended sense — the
+"vocab present but unused" failure mode is partially fixed. Run 3
+trees show atan2 used in q1 (`atan2(((th + (y - (th > y))) - ...), x)`)
+and q3 (`atan2(((th + x) - 2.36356), 0.963209)`); Run 2 trees used
+NO atan2 anywhere. **But the score didn't move** — q1 went 0.34 →
+0.35, q3 went 0.30 → 0.33, and q2 regressed 0.78 → 0.83 with cx
+jumping to 32.
+
+**Diagnosis:** the GP now uses atan2 in the WRONG composition. The
+analytical IK calls for `atan2(y_w, x_w) - atan2(sin(q2), 1+cos(q2))`,
+but the GP found `min(pow(0.548289, x), atan2(...))` — same vocabulary,
+different structure. This is a NEW failure mode beyond Runs 1-2:
+
+| Failure mode | Run 1 | Run 2 | Run 3 |
+|---|---|---|---|
+| Vocab gap | D | (closed) | (closed) |
+| Vocab present but unused | (gap unproven) | D | (closed) |
+| **Wrong composition with right vocab** | n/a | n/a | **D (new)** |
+
+Three runs, three structurally-different failure modes. Each fix
+closed its predecessor's mode and revealed the next one.
+
+**Direct empirical promotion for next experiment:** the "wrong
+composition with right vocab" mode is exactly what
+`benchmark_score_improvement.md` §4.2 (template-based mutations) was
+designed to address. Now empirically justified, not just theoretical.
+
+**Test count: 545 passing** (was 537; +8 schedule tests).
+
+**Lifecycle close-out:**
+- `roadmap.md` §2.3 moved to "Recently shipped" with Run 3 verdict
+- `sr_for_inverse_kinematics.md` §6 sub-question 1 updated with all 3 runs
+- Task #82 closed
+
 ### Added (research note: benchmark difficulty + climb-then-simplify path problem)
 
 New `docs/research/benchmark_difficulty_and_climb_then_simplify.md`

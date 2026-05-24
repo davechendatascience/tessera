@@ -34,7 +34,7 @@ from pathlib import Path
 
 import numpy as np
 
-from tessera.search import GP, GPConfig
+from tessera.search import GP, GPConfig, climb_then_anneal_parsimony
 from tessera.expression.tree import complexity
 
 
@@ -134,6 +134,14 @@ def run_sr_for_joint_with_tree(joint_name, X_train, y_train, X_test, y_test, *,
     cfg = GPConfig(
         pop_size=pop_size, n_gens=n_gens, init_max_depth=4,
         parsimony=parsimony, seed=seed,
+        # Climb-then-anneal: keeps parsimony at 0.0001 for the first 30%
+        # of gens (lets the GP explore high-cx atan2/acos compositions),
+        # then anneals to the configured `parsimony` value. Tests the
+        # climb-then-simplify hypothesis from
+        # docs/research/benchmark_difficulty_and_climb_then_simplify.md §2.
+        parsimony_schedule=climb_then_anneal_parsimony(
+            climb_until=0.3, climb_value=0.0001, final_value=parsimony,
+        ),
         pointwise_only=True, verbose=verbose,
         optimize_constants_every=5,
         optimize_constants_method="Nelder-Mead",

@@ -3,6 +3,10 @@
 Refines the Const leaves of a tree via scipy.optimize.minimize. Used by
 GP every K generations on Pareto-front candidates; also available
 standalone for use by SA, RandomSearch, or any future searcher.
+
+Also hosts the parsimony-schedule factory used by GP's climb-then-
+simplify support (per
+`docs/research/benchmark_difficulty_and_climb_then_simplify.md` §2).
 """
 from __future__ import annotations
 from typing import Callable
@@ -223,3 +227,62 @@ def optimize_constants_jax(
 
     new_tree = set_const_values(tree, [float(c) for c in best_consts])
     return new_tree, best_loss
+
+
+# ---------------- Parsimony schedules ----------------
+
+def climb_then_anneal_parsimony(
+    climb_until: float = 0.3,
+    climb_value: float = 0.0001,
+    final_value: float = 0.005,
+) -> Callable[[int, int], float]:
+    """Climb-then-anneal parsimony schedule.
+
+    Returns a callable suitable for `GPConfig.parsimony_schedule`:
+
+        schedule(gen, n_gens) -> float
+
+    Behaviour:
+      - For the first `climb_until` fraction of generations, returns
+        `climb_value` (use a small POSITIVE value like 0.0001 to barely
+        penalise complexity during exploration; avoid going negative
+        unless you want runaway complexity).
+      - From `climb_until` to 1.0, linearly anneals from `climb_value`
+        up to `final_value` (the normal parsimony pressure).
+
+    Use case: the climb-then-simplify path problem (per
+    `docs/research/benchmark_difficulty_and_climb_then_simplify.md` §2).
+    Lets the GP explore high-cx trees that combine new operators
+    (e.g., atan2 in IK) before parsimony pressure forces simplification.
+
+    Parameters
+    ----------
+    climb_until : float
+        Fraction of generations to keep at climb_value. Default 0.3.
+    climb_value : float
+        Parsimony during the climb phase. Default 0.0001 (50× less
+        than the typical 0.005 final value). Recommended >= 0; negative
+        values cause runaway complexity since GP fitness rewards
+        bigger cx.
+    final_value : float
+        Parsimony at gen = n_gens. Matches `GPConfig.parsimony` typical
+        value (0.005).
+    """
+    def schedule(gen: int, n_gens: int) -> float:
+        if n_gens <= 0:
+            return final_value
+        progress = gen / n_gens
+        if progress < climb_until:
+            return climb_value
+        # Linear anneal from climb_value at progress=climb_until to
+        # final_value at progress=1.0
+        anneal_fraction = (progress - climb_until) / max(1.0 - climb_until, 1e-9)
+        return climb_value + (final_value - climb_value) * anneal_fraction
+    return schedule
+
+
+__all__ = [
+    "optimize_constants",
+    "optimize_constants_jax",
+    "climb_then_anneal_parsimony",
+]

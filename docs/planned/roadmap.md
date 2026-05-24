@@ -119,6 +119,7 @@ Done items previously listed here have been moved to:
 
 | Item | Status | Where |
 |---|---|---|
+| Non-monotone parsimony schedule + `climb_then_anneal_parsimony` factory | ✓ DONE | `GPConfig.parsimony_schedule`; `tessera.search.climb_then_anneal_parsimony`; 8 new tests. IK Run 3: GP NOW uses atan2 in 2 of 3 trees (vocab-unused mode closed), but composition is still wrong → next mode "wrong composition with right vocab" target of template mutations. |
 | `atan2`, `acos`, `asin` primitives | ✓ DONE | `tessera.expression.tree.UN_OP_FNS` + `BIN_OP_FNS`; 16 new tests. IK rerun stayed Tier D — vocab fix didn't help (see below). |
 | 3-DoF planar IK benchmark (Tier-D result, both runs) | ✓ DONE | `benchmarks/run_ik_planar_3dof.py` + `benchmarks/results/ik_planar_3dof.md`. Run 2 with atan2/acos/asin: still Tier D. GP doesn't USE the new ops — search-space-explosion failure mode. Documented in `network_sr_and_budget_allocation.md`. |
 | `jax.grad` constant optimisation (`optimize_constants_jax`) | ✓ DONE | `tessera.search.const_opt`; GPConfig.optimize_constants_method='jax_adam' |

@@ -145,7 +145,12 @@ The composition is interesting: tessera's existing measure-theoretic ops (`Linea
 1. **Does plain SR rediscover 3-DoF planar IK with `sin/cos` only?**
    Cheapest experiment; ~half day to set up. Result determines whether atan2 is necessary.
 
-   > **ANSWERED 2026-05-24: NO.** Tier-D result on `benchmarks/run_ik_planar_3dof.py` (all 3 joints failed; q2 worst at test_rel=0.73 — directly tied to its `acos` dependence). The atan2/acos gap is empirically real, not theoretical. Tracked as a planned-for-ship item: add `atan2`/`acos`/`asin` primitives via the same lifecycle path that shipped `sin`/`cos` (§4.1 of `benchmark_score_improvement.md`).
+   > **ANSWERED 2026-05-24: NO.** Tier-D across THREE successive runs, each revealing a different failure mode:
+   >   - Run 1 (sin/cos only) → vocabulary gap
+   >   - Run 2 (+ atan2/acos/asin) → vocab present but UNUSED by random sampling
+   >   - Run 3 (+ climb-then-anneal parsimony schedule) → vocab now USED, but in WRONG composition
+   >
+   > Three runs, three structurally-different failure modes. The remaining mode ("wrong composition with right vocab") is the target of `benchmark_score_improvement.md` §4.2 (template-based mutations) — the natural next experiment.
 
 2. **What's the search-budget-to-accuracy curve?**
    Sweep pop=50, 200, 1000 × gens=20, 50, 100. Does compute monotonically buy accuracy?

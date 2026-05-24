@@ -87,6 +87,28 @@ class GPConfig:
     mutation_max_depth: int = 3
     tournament_size: int = 3
     parsimony: float = 0.005    # added penalty per complexity unit
+    parsimony_schedule: Callable[[int, int], float] | None = None
+    """Optional non-monotone parsimony schedule. When set, called as
+    `schedule(current_gen, total_gens) -> float` each generation; the
+    returned value overrides `parsimony` for THAT gen's fitness term.
+
+    Use case: the climb-then-simplify path problem (per
+    `docs/research/benchmark_difficulty_and_climb_then_simplify.md` §2).
+    Low parsimony during early gens lets the GP explore complex trees
+    that might compose useful operator combinations (e.g., atan2 in IK);
+    annealing to normal parsimony in later gens drives the discovered
+    structure down to its simplest form.
+
+    Idiom: pair with `tessera.search.climb_then_anneal_parsimony`:
+        cfg = GPConfig(
+            parsimony=0.005,
+            parsimony_schedule=climb_then_anneal_parsimony(
+                climb_until=0.3, climb_value=0.0001, final_value=0.005,
+            ),
+        )
+
+    Note: schedules do NOT propagate through the multiprocess worker
+    path. With n_workers>1, only the static `parsimony` is used."""
     elitism_keep_pareto: bool = True
     early_stop_patience: int = 10   # gens without best-fitness improvement
     seed: int = 0
@@ -303,6 +325,10 @@ class GP:
         self._env_jax: dict | None = None
         self._y_true_jax = None
         self._feature_names_tuple: tuple = ()
+        # Current generation's parsimony coefficient. Updated each gen
+        # if `cfg.parsimony_schedule` is set; otherwise stays at the
+        # static `cfg.parsimony` value.
+        self._current_parsimony: float = self.cfg.parsimony
 
     def stop(self) -> None:
         """Signal the run loop to exit at the next generation boundary."""
@@ -369,6 +395,14 @@ class GP:
                 if self.cfg.verbose:
                     print(f"[gp] stop requested at gen {gen}, exiting")
                 break
+
+            # Non-monotone parsimony schedule, if configured. The
+            # returned value is used by every scoring path this gen
+            # (_score, _score_batch, _score_no_simplify, polish).
+            if self.cfg.parsimony_schedule is not None:
+                self._current_parsimony = float(
+                    self.cfg.parsimony_schedule(gen, self.cfg.n_gens)
+                )
 
             # Expose the current Pareto front to _score so it can prune
             # using the pareto_threshold.
@@ -537,7 +571,7 @@ class GP:
         for j, i in enumerate(batch_idx):
             l = float(losses_np[j])
             cx = cxs[j]
-            fitness = l + self.cfg.parsimony * cx
+            fitness = l + self._current_parsimony * cx
             results[i] = Candidate(
                 tree=trees[i], train_loss=l, complexity=cx,
                 fitness=fitness, born_gen=born_gen,
@@ -569,7 +603,7 @@ class GP:
             loss_fn=self.loss_fn,
             min_valid_frac=self.cfg.min_valid_frac,
         )
-        fitness = loss + self.cfg.parsimony * cx
+        fitness = loss + self._current_parsimony * cx
         return Candidate(tree=tree, train_loss=loss, complexity=cx,
                          fitness=fitness, born_gen=born_gen)
 
@@ -605,7 +639,7 @@ class GP:
             loss_fn=self.loss_fn,
             min_valid_frac=self.cfg.min_valid_frac,
         )
-        fitness = loss + self.cfg.parsimony * cx
+        fitness = loss + self._current_parsimony * cx
         return Candidate(tree=tree, train_loss=loss, complexity=cx,
                          fitness=fitness, born_gen=born_gen)
 
@@ -655,7 +689,7 @@ class GP:
                 )
             if new_loss < c.train_loss - 1e-12:
                 cx = complexity(new_tree)
-                fitness = new_loss + self.cfg.parsimony * cx
+                fitness = new_loss + self._current_parsimony * cx
                 improved[id(c.tree)] = Candidate(
                     tree=new_tree, train_loss=new_loss, complexity=cx,
                     fitness=fitness, born_gen=gen,
