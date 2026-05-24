@@ -124,6 +124,8 @@ Concrete: change `random_tree` to optionally accept a `residual` argument; bias 
 
 ### 4.2 Polynomial-basis sufficient statistics (Regime B implementation)
 
+> **Promoted to PLANNED → IN PROGRESS (2026-05-24)**: see [`docs/planned/roadmap.md`](../planned/roadmap.md) §2.3. First phase: `PolynomialMoments` foundation + tests.
+
 For benchmarks where the target is well-approximated in a polynomial basis (most of Feynman, much of MNIST features), precompute `M_k`, `R_k` once. Mutations that ADD a polynomial term evaluate in O(degree) instead of O(N).
 
 This requires a NEW kind of mutation operator: `add_polynomial_term(tree, x_var, coefficient, degree)`. The mutation's δ is `coefficient · x^degree`; its loss impact is `(2/N) coefficient · R_degree + (1/N) coefficient² · M_{2·degree}` — O(1) in N.

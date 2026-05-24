@@ -70,6 +70,21 @@ These items were promoted from `docs/research/high_dim_symbolic_regression.md` �
 
 **Acceptance criterion:** with `prune_by_lower_bound=True` (default for MSE), the GP run on a Feynman benchmark equation prunes ≥ 30% of candidates per generation (median across 5 seeds) without changing the Pareto front it returns. Wall-clock per generation drops by ≥ 20% over the same problem without pruning.
 
+### 2.3 Polynomial-basis sufficient statistics (Regime B) ▷ IN PROGRESS
+
+**Origin:** [`docs/research/analytical_delta_loss.md`](../research/analytical_delta_loss.md) §4.2.
+
+**What:** new `tessera.search.sufficient_stats` module exposing `PolynomialMoments(X, y, residual, max_degree)` — precomputes `M_k = Σ x^k` (feature moments, O(N · max_degree) once) and `R_k = Σ residual · x^k` (residual-feature moments). Provides `delta_loss(coefficients)` evaluating `Δloss = (2/N) Σ c_k R_k + (1/N) Σ c_k c_j M_{k+j}` in **O(degree²), independent of N**. Then a `mutate_add_polynomial_term` operator consuming these stats, and integration into the GP loop (optional flag, refresh moments when best candidate changes).
+
+**Why now:** the user's analytical-Δloss question (2026-05-24) called this out as the concrete actionable thread. Regime B has no published precedent in GP-style SR; STLSQ/SINDy is the closest analog but restricts to sparse linear-in-parameters. The polynomial slice is the cheapest validation of the mechanism — if it works on Feynman polynomial targets, it justifies the full SINDy-hybrid (§4.4) follow-on.
+
+**Effort:** 3-5 days total.
+  - Phase 1 (1 day): `PolynomialMoments` class + `delta_loss` + tests. Verified-correct foundation.
+  - Phase 2 (1-2 days): `mutate_add_polynomial_term` operator + GP integration (`GPConfig.use_sufficient_stats=False` default, opt-in flag).
+  - Phase 3 (1-2 days): Feynman A/B benchmark on polynomial-friendly targets (I.6.2, I.6.20, I.8.14, etc.). Document in `benchmarks/results/feynman_sufficient_stats.md`.
+
+**Acceptance criterion:** (a) `PolynomialMoments.delta_loss(coefs)` matches naive-recompute Δloss to ≤ 1e-9 relative error on synthetic data. (b) Wall-clock for evaluating a polynomial mutation Δloss at N=10000 is **≥ 10× faster** than the equivalent full re-eval through the existing GP path (independent-of-N regime confirmed). (c) Feynman A/B: at least 2 of the polynomial-friendly Feynman targets land at a Pareto-better (cx, MSE) point with the flag ON vs OFF within the same gen budget. Negative result (Feynman polynomial unchanged) is also acceptable IF the wall-clock + correctness criteria are met — it tells us the basis exists but the GP can't find good polynomial templates, which redirects the next ship to §4.4.
+
 
 ## 3. Reading list
 

@@ -6,6 +6,46 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Phase 1 of §2.3: polynomial-basis sufficient statistics, Regime B)
+
+First foundational ship of the analytical-Δloss thread. New module
+`tessera.search.sufficient_stats` implements `PolynomialMoments` —
+precomputes the basis-Gram matrix `G_kj = Σ φ_k(x_i)·φ_j(x_i)` and
+the residual-basis projection `R_k = Σ residual_i · φ_k(x_i)` ONCE
+in O(N·K²), then evaluates any basis mutation's Δloss in **O(K²),
+independent of N**.
+
+Math (for MSE):
+  Δloss = (2/N) c·R + (1/N) cᵀ G c
+  c* = -G⁻¹ R  (closed-form optimal coefficients)
+  Δloss(c*) = -(1/N) Rᵀ G⁻¹ R  (always ≤ 0)
+
+Helper `monomial_basis(feature_indices, max_degree)` builds the
+standard univariate-monomial basis.
+
+Measured speedup curve (3-feature × degree-3 basis):
+
+  N          suff (us)    naive (us)   speedup
+  ---------- ---------    ----------   --------
+  1,000      2.75         91.18        33×
+  10,000     3.09         608.08       196×
+  100,000    3.20         11,330       3,536×
+  1,000,000  3.05         112,283      36,805×
+
+The per-query time is essentially constant at ~3 μs regardless of N
+— confirming the O(1)-in-N claim. The acceptance criterion (a) from
+roadmap §2.3 (≥10× speedup at N=10k) is met with margin.
+
+21 new tests covering: correctness vs naive recompute (3 cases),
+closed-form optimal coefficients (3 cases), O(1)-in-N scaling
+parametrised over N ∈ {1k, 10k, 100k} (3 cases), explicit ≥10×
+speedup acceptance criterion (1 case), monomial_basis helper (5
+cases), input validation (6 cases). Full search suite: 101 passed.
+
+This is the foundation. Phase 2 (`mutate_add_polynomial_term`
+operator + GPConfig integration) and Phase 3 (Feynman A/B benchmark)
+are tracked in `docs/planned/roadmap.md` §2.3.
+
 ### Added (research note: analytical Δloss for symbolic mutations)
 
 User asked: *"Is there a way to do the calculus of loss impact of

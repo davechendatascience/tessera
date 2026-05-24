@@ -42,6 +42,7 @@ from .const_opt import (
 )
 from .hall_of_fame import HallOfFame
 from .bounds import mse_lower_bound, pareto_threshold
+from .sufficient_stats import PolynomialMoments, monomial_basis
 from .gp import GP, GPConfig
 from .sa import SimulatedAnnealing, SAConfig
 from .random_search import RandomSearch, RSConfig
@@ -55,6 +56,7 @@ __all__ = [
     "climb_then_anneal_parsimony",
     "HallOfFame",
     "mse_lower_bound", "pareto_threshold",
+    "PolynomialMoments", "monomial_basis",
     # Searchers
     "GP", "GPConfig",
     "SimulatedAnnealing", "SAConfig",
