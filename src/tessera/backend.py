@@ -220,7 +220,36 @@ def current() -> Backend:
     return _CURRENT
 
 
+# ---------------- Array-module dispatch (used by ops + Measure.apply) ----------------
+
+def array_module(x):
+    """Return the array library (numpy or jax.numpy) appropriate for x.
+
+    Used by backend-polymorphic op implementations:
+
+        xp = array_module(x)
+        return (xp.asarray(a) > xp.asarray(b)).astype(xp.float64)
+
+    Detection is by type-introspection (no eager jax import). If the input
+    is a JAX array (regardless of which backend is active), returns
+    `jax.numpy`. Otherwise returns `numpy`. This means trees can be
+    evaluated on JAX arrays even with the default numpy backend active,
+    and vice versa -- the array's own type drives the dispatch.
+
+    Falls back to numpy if jax can't be imported.
+    """
+    # Cheap duck-type test: JAX arrays expose .device_buffer or live in jax.* modules
+    if type(x).__module__.startswith("jax") or type(x).__module__.startswith("jaxlib"):
+        try:
+            import jax.numpy as jnp
+            return jnp
+        except ImportError:
+            return np
+    return np
+
+
 __all__ = [
     "Backend", "NumpyBackend", "JaxBackend",
     "set_backend", "get_backend", "current",
+    "array_module",
 ]

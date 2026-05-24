@@ -44,6 +44,7 @@ import numpy as np
 from .functional import Functional, LinearFunctional, SeparableBilinear, Volterra2
 from .measure_2d import Measure2D
 from .cache import FunctionalCache
+from ..backend import array_module
 
 
 # ---------------- Pointwise operator tables ----------------
@@ -57,69 +58,117 @@ _POW_EXP_CLIP = 8.0   # |b| capped at 8 to avoid overflow
 _POW_BASE_FLOOR = 1e-12  # |a| floored to avoid 0**negative
 
 
+def _as_float(xp, x):
+    """Cast to xp's default float type. numpy → float64; jax → respects
+    its config (typically float32 unless jax_enable_x64 is set)."""
+    if xp is np:
+        return xp.asarray(x, dtype=np.float64)
+    return xp.asarray(x)
+
+
 def _safe_pow(a, b):
-    a_arr = np.asarray(a, dtype=np.float64)
-    b_arr = np.asarray(b, dtype=np.float64)
-    base = np.maximum(np.abs(a_arr), _POW_BASE_FLOOR)
-    exp = np.clip(b_arr, -_POW_EXP_CLIP, _POW_EXP_CLIP)
-    with np.errstate(over="ignore", invalid="ignore"):
-        out = np.power(base, exp)
-    return np.where(np.isfinite(out), out, 0.0)
+    xp = array_module(a if hasattr(a, "shape") else b)
+    a_arr = _as_float(xp, a)
+    b_arr = _as_float(xp, b)
+    base = xp.maximum(xp.abs(a_arr), _POW_BASE_FLOOR)
+    exp = xp.clip(b_arr, -_POW_EXP_CLIP, _POW_EXP_CLIP)
+    if xp is np:
+        with np.errstate(over="ignore", invalid="ignore"):
+            out = np.power(base, exp)
+    else:
+        # JAX: no errstate; non-finite handled below
+        out = xp.power(base, exp)
+    return xp.where(xp.isfinite(out), out, 0.0)
+
+
+def _indicator(op, a, b):
+    """Backend-polymorphic threshold indicator: returns float64 {0,1}."""
+    xp = array_module(a if hasattr(a, "shape") else b)
+    a_arr = xp.asarray(a)
+    b_arr = xp.asarray(b)
+    if op == "gt":
+        return (a_arr > b_arr).astype(xp.float64)
+    if op == "lt":
+        return (a_arr < b_arr).astype(xp.float64)
+    if op == "ge":
+        return (a_arr >= b_arr).astype(xp.float64)
+    if op == "le":
+        return (a_arr <= b_arr).astype(xp.float64)
+    raise ValueError(op)
 
 
 BIN_OP_FNS: dict[str, Callable] = {
     "add":  lambda a, b: a + b,
     "sub":  lambda a, b: a - b,
     "mul":  lambda a, b: a * b,
-    "div":  lambda a, b: np.where(b == 0, 0.0, a / np.where(b == 0, 1.0, b)),
-    "min":  np.minimum,
-    "max":  np.maximum,
+    # Safe-divide is backend-polymorphic: np.where works on both numpy and
+    # jax arrays via NumPy API auto-dispatch.
+    "div":  lambda a, b: array_module(b if hasattr(b, "shape") else a).where(
+                            b == 0, 0.0,
+                            a / array_module(b if hasattr(b, "shape") else a).where(b == 0, 1.0, b)),
+    "min":  lambda a, b: array_module(a if hasattr(a, "shape") else b).minimum(a, b),
+    "max":  lambda a, b: array_module(a if hasattr(a, "shape") else b).maximum(a, b),
     # Threshold indicators — return float64 {0.0, 1.0} per element.
     # Bridge to EML-style binary-window primitives without needing a
     # dedicated WeightedIndicatorSum operator (see docs/roadmap.md §3).
-    "gt":   lambda a, b: (np.asarray(a) > np.asarray(b)).astype(np.float64),
-    "lt":   lambda a, b: (np.asarray(a) < np.asarray(b)).astype(np.float64),
-    "ge":   lambda a, b: (np.asarray(a) >= np.asarray(b)).astype(np.float64),
-    "le":   lambda a, b: (np.asarray(a) <= np.asarray(b)).astype(np.float64),
+    "gt":   lambda a, b: _indicator("gt", a, b),
+    "lt":   lambda a, b: _indicator("lt", a, b),
+    "ge":   lambda a, b: _indicator("ge", a, b),
+    "le":   lambda a, b: _indicator("le", a, b),
     # Protected power: pow(|a|, clip(b, ±8)). Drops sign of base; use
     # sign(a)*pow(|a|, b) for signed forms. Matches PySR's safe_pow.
     "pow":  _safe_pow,
 }
 BIN_OPS = tuple(BIN_OP_FNS.keys())
 
-# Unary
+# Unary reductions. Reduce to scalar; use NaN-safe mean/max/sum/std.
+# Backend-polymorphic via array_module dispatch. JAX-compatible: replace
+# boolean indexing with where-mask + count.
 def _reduce_mean(x):
-    x = np.asarray(x)
-    mask = np.isfinite(x)
-    if not mask.any():
+    xp = array_module(x)
+    x = xp.asarray(x)
+    mask = xp.isfinite(x)
+    n_valid = mask.sum()
+    if int(n_valid) == 0:
         return float("nan")
-    return float(x[mask].mean())
+    safe = xp.where(mask, x, xp.zeros_like(x))
+    return float(safe.sum() / n_valid)
 
 
 def _reduce_max(x):
-    x = np.asarray(x)
-    mask = np.isfinite(x)
-    if not mask.any():
+    xp = array_module(x)
+    x = xp.asarray(x)
+    mask = xp.isfinite(x)
+    if int(mask.sum()) == 0:
         return float("nan")
-    return float(x[mask].max())
+    # Replace non-finite with -inf so max ignores them
+    safe = xp.where(mask, x, -xp.inf)
+    return float(safe.max())
 
 
 def _reduce_sum(x):
-    x = np.asarray(x)
-    mask = np.isfinite(x)
-    if not mask.any():
+    xp = array_module(x)
+    x = xp.asarray(x)
+    mask = xp.isfinite(x)
+    if int(mask.sum()) == 0:
         return float("nan")
-    return float(x[mask].sum())
+    safe = xp.where(mask, x, xp.zeros_like(x))
+    return float(safe.sum())
 
 
 def _reduce_std(x):
-    x = np.asarray(x)
-    mask = np.isfinite(x)
-    if not mask.any():
+    xp = array_module(x)
+    x = xp.asarray(x)
+    mask = xp.isfinite(x)
+    n_valid = int(mask.sum())
+    if n_valid == 0:
         return float("nan")
-    if int(mask.sum()) < 2:
+    if n_valid < 2:
         return 0.0
-    return float(x[mask].std())
+    safe = xp.where(mask, x, xp.zeros_like(x))
+    mean = safe.sum() / n_valid
+    var = xp.where(mask, (x - mean) ** 2, xp.zeros_like(x)).sum() / n_valid
+    return float(xp.sqrt(var))
 
 
 # Protected transcendentals. PySR conventions (`safe_sqrt`, `safe_log`,
@@ -129,26 +178,34 @@ _LOG_FLOOR = 1e-12
 
 
 def _safe_sqrt(x):
-    return np.sqrt(np.abs(np.asarray(x, dtype=np.float64)))
+    xp = array_module(x)
+    return xp.sqrt(xp.abs(_as_float(xp, x)))
 
 
 def _safe_log(x):
-    return np.log(np.maximum(np.abs(np.asarray(x, dtype=np.float64)), _LOG_FLOOR))
+    xp = array_module(x)
+    return xp.log(xp.maximum(xp.abs(_as_float(xp, x)), _LOG_FLOOR))
 
 
 def _safe_exp(x):
-    return np.exp(np.clip(np.asarray(x, dtype=np.float64), -_EXP_CLIP, _EXP_CLIP))
+    xp = array_module(x)
+    return xp.exp(xp.clip(_as_float(xp, x), -_EXP_CLIP, _EXP_CLIP))
+
+
+def _step(x):
+    xp = array_module(x)
+    return (xp.asarray(x) > 0.0).astype(xp.float64)
 
 
 UN_OP_FNS: dict[str, Callable] = {
-    "tanh": np.tanh,
-    "abs":  np.abs,
-    "sign": np.sign,
-    "neg":  np.negative,
+    "tanh": lambda x: array_module(x).tanh(x),
+    "abs":  lambda x: array_module(x).abs(x),
+    "sign": lambda x: array_module(x).sign(x),
+    "neg":  lambda x: array_module(x).negative(x),
     # Heaviside step: 1.0 if x > 0 else 0.0. Equivalent to gt(x, 0) but
     # cheaper (no broadcast on the threshold side) and easier for the
     # GP to discover.
-    "step": lambda x: (np.asarray(x) > 0.0).astype(np.float64),
+    "step": _step,
     # Protected transcendentals (PySR convention).
     # sqrt: sqrt(|x|). Sign-dropping; pair with sign(x) if signed roots needed.
     # log:  log(max(|x|, 1e-12)). Drops sign; well-defined for any input.
@@ -438,11 +495,19 @@ def set_const_values(node: Node, new_values: list[float]) -> Node:
 
 # ---------------- Evaluation ----------------
 
-def _maybe_broadcast(v, n: int) -> np.ndarray:
-    """If v is a scalar, broadcast to a length-n array (1-D). Else return as-is."""
-    if np.isscalar(v):
-        return np.full(n, float(v), dtype=np.float64)
-    return np.asarray(v, dtype=np.float64)
+def _maybe_broadcast(v, n: int, ref=None):
+    """If v is a scalar, broadcast to a length-n array (1-D). Else return as-is.
+
+    Backend-polymorphic: if `ref` is a JAX array, the broadcast result is
+    a JAX array on the same device. Otherwise numpy.
+    """
+    if np.isscalar(v) or (hasattr(v, "ndim") and v.ndim == 0):
+        xp = array_module(ref) if ref is not None else np
+        if xp is np:
+            return xp.full(n, float(v), dtype=np.float64)
+        return xp.full(n, float(v))
+    xp = array_module(v)
+    return _as_float(xp, v)
 
 
 def evaluate(
@@ -484,10 +549,17 @@ def evaluate(
     if isinstance(node, Var):
         if node.name not in env:
             raise KeyError(f"variable {node.name!r} not in env (have {list(env)})")
-        return np.asarray(env[node.name], dtype=np.float64)
+        val = env[node.name]
+        # Preserve array library: numpy stays numpy (cast to float64 for
+        # historical consistency), JAX stays JAX (respects its dtype
+        # config -- typically float32 unless jax_enable_x64 is set).
+        xp = array_module(val)
+        return _as_float(xp, val)
 
     if isinstance(node, Const):
-        return np.float64(node.value)   # scalar; broadcasts on use
+        # Python float — broadcasts polymorphically against both numpy
+        # and JAX arrays via array's arithmetic operators.
+        return float(node.value)
 
     if isinstance(node, BinOp):
         a = evaluate(node.a, env, cache, fill_warmup=fill_warmup)

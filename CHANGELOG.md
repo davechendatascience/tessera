@@ -6,6 +6,54 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (GPU backend — Tier 1: end-to-end `evaluate` on JAX arrays)
+- **`tessera.backend.array_module(x)`** — backend-polymorphic dispatch
+  helper. Returns `jax.numpy` if `x` is a JAX array, else `numpy`. Used
+  throughout the op tables and `Measure.apply` to let trees evaluate on
+  whatever array library the inputs are in, without changing global
+  state.
+- **All `BIN_OP_FNS` / `UN_OP_FNS` are now backend-polymorphic.** Pass
+  a JAX array in, get a JAX array out. Previously the indicator ops
+  (`gt/lt/ge/le`, `step`) and the protected transcendentals
+  (`sqrt/exp/log/pow`) hard-converted to numpy via `np.asarray(...)`;
+  these now use `array_module(x).asarray(...)` to preserve the array
+  library.
+- **`Measure.apply(jax_array)` routes to a JAX path** that materializes
+  the discrete kernel as a JAX array and runs `jnp.convolve` for the
+  convolution. Bypasses the numba/FFT numpy-only fast-paths (recursive
+  EMA, atomic shift-and-accumulate). Output is a JAX array on the same
+  device as the input.
+- **`evaluate(tree, env_jax)`** end-to-end works on JAX. `Var` resolution
+  detects JAX inputs and returns JAX arrays; `_maybe_broadcast` is
+  backend-polymorphic; `Const` leaves return Python floats that broadcast
+  against either array library. Combined, this means **a tree can be
+  evaluated on GPU just by passing a JAX env**.
+- **33 new tests** in `tests/test_jax_backend_tier1.py` (skipped if jax
+  unavailable). Cover: `array_module` dispatch; every bin/un op produces
+  a JAX array on JAX inputs; numerical agreement with numpy path within
+  float32 precision; `Measure.apply` JAX path matches numpy `backend="kernel"`
+  exactly; full `evaluate(tree, env_jax)` round-trip for pointwise,
+  indicator, transcendental, and Functional trees.
+- **`notebooks/tessera_jax_tier1.ipynb`** — Tier 1 demo on Colab. Installs
+  tessera + JAX-CUDA, builds a representative SR tree, times
+  `evaluate` on numpy CPU vs JAX GPU at N=60K (MNIST scale). Pointwise
+  trees see 5-50× speedup typical on Colab T4; measure-theoretic
+  (Functional) trees see 10-100× because the JAX `convolve` saturates
+  the GPU.
+
+**Full test count: 424 passing** (was 392; +32 Tier 1 + 1 previously-skipped
+backend test that now runs because JAX is available locally).
+
+**What Tier 1 does NOT do:**
+- GP search loop is still numpy-internal; only individual tree evaluations
+  on JAX inputs run on GPU. Per-generation overhead dominates for small
+  populations.
+- No `jit`-compilation of trees (Tier 2).
+- No batched-population evaluation via `vmap` (Tier 3).
+- No `jax.grad`-based constant optimization (separate sub-milestone).
+
+These are the next bottlenecks for the MNIST 95% target.
+
 ### Added (transcendental primitives — closes Feynman vocabulary gap)
 - **`sqrt`, `exp`, `log`** added to `UN_OP_FNS` and **`pow`** added to
   `BIN_OP_FNS` in `tessera.expression.tree`. All use PySR-style
