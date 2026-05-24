@@ -17,7 +17,7 @@ Status (2026-05-25)
 - **JaxBackend**: SKELETON. Imports jax lazily; arrays can be moved
   to JAX form via `asarray`. Most operators raise NotImplementedError
   pending the full Stage-1 backend port (per
-  docs/research_notes/gpu_and_cv_via_sr.md §3 stage 1).
+  docs/research/gpu_and_cv_via_sr.md §3 stage 1).
 
 Why this exists as a public API NOW, before the full implementation
 is done: the *interface commitment* shapes the rest of the codebase.
@@ -28,7 +28,7 @@ that churn.
 
 What needs to happen for full GPU support
 -----------------------------------------
-See `docs/milestones/gpu_backend.md`. Headline summary:
+See `docs/shipped/gpu_backend.md`. Headline summary:
 
 1. `JaxBackend.asarray`, `.convolve`, `.where`, etc. — wrap jax.numpy
 2. `Measure.apply` — dispatch to backend; provide a JAX
@@ -120,7 +120,7 @@ class JaxBackend:
     Activate via `set_backend("jax")`. JAX must be installed:
         pip install jax jaxlib
 
-    See `docs/milestones/gpu_backend.md` for the full porting roadmap.
+    See `docs/shipped/gpu_backend.md` for the full porting roadmap.
     """
     name = "jax"
 

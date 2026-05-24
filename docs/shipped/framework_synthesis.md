@@ -136,7 +136,7 @@ Where the math runs.
 | `FunctionalCache` | Subexpression caching |
 | Multi-worker `ProcessPoolExecutor` | Limited GP parallelism |
 | **`tessera.backend`** (new today) | Switchable CPU/GPU API |
-| `docs/milestones/gpu_backend.md` | Tracking the GPU port (8-10 days work) |
+| `docs/shipped/gpu_backend.md` | Tracking the GPU port (8-10 days work) |
 
 GPU support is the next-big-milestone, but the framework's
 THEORETICAL claims don't depend on it. The backend abstraction makes

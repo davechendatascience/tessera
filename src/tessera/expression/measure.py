@@ -258,7 +258,7 @@ class Measure:
         # Canonicalise the atoms tuple at construction so two semantically
         # identical Measures hash equal. Required for the FunctionalCache
         # to recognise mathematically-equivalent measures across mutations
-        # (per docs/research_notes/measure_theory_and_perfect_info.md §3.1
+        # (per docs/research/measure_theory_and_perfect_info.md §3.1
         # on Lebesgue decomposition uniqueness).
         #
         # Three operations:
@@ -378,7 +378,7 @@ class Measure:
 
         That is the identity that lets the SR search collapse
         `L_μ(L_ν(x)) → L_{μ*ν}(x)` — see the §3.3 (measure-algebra
-        identities) of docs/research_notes/measure_theory_and_perfect_info.md.
+        identities) of docs/research/measure_theory_and_perfect_info.md.
 
         Implementation: discrete convolution of the two kernels via
         `np.convolve`. The resulting kernel is then sparsified into

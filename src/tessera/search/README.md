@@ -103,5 +103,5 @@ Coverage:
 
 ## See also
 
-- `docs/roadmap.md` — gap analysis vs PySR, reading list, QUBO/Ising
+- `docs/planned/roadmap.md` — gap analysis vs PySR, reading list, QUBO/Ising
   direction for tessera.search

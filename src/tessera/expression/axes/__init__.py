@@ -18,7 +18,7 @@ Status
 ------
 Minimum-useful first version. Provides the TYPE SYSTEM and a
 COMPATIBILITY CHECKER. Does NOT yet enforce in the GP search loop
-(future work — see docs/research_notes/invariance_in_sr.md §11).
+(future work — see docs/research/invariance_in_sr.md §11).
 
 Existing untyped `Var` continues to work; `TypedVar` is an OPTIONAL
 overlay you adopt when you want explicit invariance declarations.

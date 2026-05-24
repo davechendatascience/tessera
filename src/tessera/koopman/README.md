@@ -1,7 +1,7 @@
 # `tessera.koopman`
 
 Explicit-latent Koopman with time-delay embedding — closed-form
-identification, single-matmul forecast. See [`docs/koopman.md`](../../../docs/koopman.md)
+identification, single-matmul forecast. See [`docs/shipped/koopman.md`](../../../docs/shipped/koopman.md)
 for the full design notes.
 
 ## Quick start
@@ -75,7 +75,7 @@ class LatentKoopman:
 `target_mode="delta"` is provided for trending / non-stationary
 series — fits to predict the increment $y_{t+1} - y_t$ instead of
 $y_{t+1}$, with a per-coordinate mean-delta correction so constant
-trend slope is representable. See `docs/koopman.md#delta-mode`.
+trend slope is representable. See `docs/shipped/koopman.md#delta-mode`.
 
 `history` is the optional context of $p$ preceding observations. If
 omitted, the model falls back to the training tail with the last bar

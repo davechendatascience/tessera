@@ -20,7 +20,7 @@ Available simplifiers
                                 first so constants cluster, then rules
                                 fold them.
 
-Future additions (see docs/research_notes/search_as_energy_min.md):
+Future additions (see docs/research/search_as_energy_min.md):
     simplify_polynomial(node) — SymPy-based polynomial reduction
                                 (optional dep)
     simplify_egg(node)        — equality-saturation via egg/egglog

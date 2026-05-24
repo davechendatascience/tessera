@@ -1,6 +1,6 @@
 """Tests for measure canonicalisation at construction.
 
-Per docs/research_notes/measure_theory_and_perfect_info.md §3.1
+Per docs/research/measure_theory_and_perfect_info.md §3.1
 (Lebesgue decomposition uniqueness): two semantically identical
 measures should be equal-by-value and hash-equal so the
 FunctionalCache recognises them.

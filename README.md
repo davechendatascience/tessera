@@ -79,7 +79,7 @@ print(f"loss={best.train_loss:.4g}  cx={best.complexity}  tree={best.tree}")
 | `tessera.expression.simplify` | shipping | Rule-based + AC-normalisation simplifier (canonical-form pass) |
 | `tessera.expression.axes` | shipping | Axis-semantic type system: Translation, CausalTranslation, Permutation, Cyclic, ... |
 | `tessera.expression.interval` | shipping | Sound interval arithmetic for B&B lower bounds (L1 norms on measures) |
-| `tessera.backend` | scaffold | CPU/GPU switchable backend API; full JAX backend tracked in [`docs/milestones/gpu_backend.md`](docs/milestones/gpu_backend.md) |
+| `tessera.backend` | scaffold | CPU/GPU switchable backend API; full JAX backend tracked in [`docs/shipped/gpu_backend.md`](docs/shipped/gpu_backend.md) |
 | `tessera.ssm` | planned | Kalman / state-space filtering |
 | `tessera.mts` | planned | Multi-timescale analysis |
 
@@ -159,13 +159,13 @@ notes below develop the theory and connect it to specific
 implementation pieces:
 
 - [`docs/PROJECT_GOALS.md`](docs/PROJECT_GOALS.md) — what tessera is for
-- [`docs/framework_synthesis.md`](docs/framework_synthesis.md) — every implementation mapped to its framework role
-- [`docs/research_notes/fit_as_perfect_info_game.md`](docs/research_notes/fit_as_perfect_info_game.md) — Knuth-grounded framework
-- [`docs/research_notes/measure_theory_and_perfect_info.md`](docs/research_notes/measure_theory_and_perfect_info.md) — measure algebra layer
-- [`docs/research_notes/search_as_energy_min.md`](docs/research_notes/search_as_energy_min.md) — algebraic equivalence as free budget
-- [`docs/research_notes/invariance_in_sr.md`](docs/research_notes/invariance_in_sr.md) — axis semantics direction
-- [`docs/research_notes/gpu_and_cv_via_sr.md`](docs/research_notes/gpu_and_cv_via_sr.md) — GPU + CV scoping
-- [`docs/milestones/gpu_backend.md`](docs/milestones/gpu_backend.md) — JAX backend port roadmap
+- [`docs/shipped/framework_synthesis.md`](docs/shipped/framework_synthesis.md) — every implementation mapped to its framework role
+- [`docs/research/fit_as_perfect_info_game.md`](docs/research/fit_as_perfect_info_game.md) — Knuth-grounded framework
+- [`docs/research/measure_theory_and_perfect_info.md`](docs/research/measure_theory_and_perfect_info.md) — measure algebra layer
+- [`docs/research/search_as_energy_min.md`](docs/research/search_as_energy_min.md) — algebraic equivalence as free budget
+- [`docs/research/invariance_in_sr.md`](docs/research/invariance_in_sr.md) — axis semantics direction
+- [`docs/research/gpu_and_cv_via_sr.md`](docs/research/gpu_and_cv_via_sr.md) — GPU + CV scoping
+- [`docs/shipped/gpu_backend.md`](docs/shipped/gpu_backend.md) — JAX backend port roadmap
 
 ## Status
 

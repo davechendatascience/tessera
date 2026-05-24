@@ -614,6 +614,135 @@ All three serve goal 2 (theory) directly and goal 1 (workbench) by
 producing publishable empirical validation. None block goal 3 (CV /
 MNIST).
 
+## 12. Open self-criticism: implementation hasn't cashed in on the framing
+
+The framing in §3-§5 makes a sharp prediction: **a real perfect-info
+engine doesn't evaluate every position; it prunes most.** Stockfish
+evaluates a tiny fraction of legal positions; alpha-beta pruning
+skips the rest. For SR-for-fit, the analogous claim is that tessera
+should do *fewer* evals, not just *faster* evals.
+
+This section is an honest audit of how the current implementation
+lives up to that prediction. Short answer: **partially**. The recent
+GPU work (Tiers 1-3, May 2026) made evaluations 25-35× faster on GPU
+at MNIST scale, which is real progress on the *fast-eval* axis. But
+the *fewer-evals* axis — which is what the perfect-info framing
+actually predicts — is significantly underused.
+
+### 12.1 The cost-structure inversion vs chess
+
+In chess, evaluation is cheap (~100 ns per position via a 50-weight
+heuristic) and search is the hard part. In SR-for-fit, evaluation
+is expensive (O(N · tree_size), typically ms to seconds) and search
+is the trivial part. The ratio is roughly N · tree_size : 1 in
+favor of chess.
+
+That asymmetry doesn't break the framing — it shifts where leverage
+comes from. The doc's §4 acknowledges this. But the implementation
+has not yet fully exploited the levers §4-§5 identify.
+
+### 12.2 Lever utilisation audit
+
+| Lever | Chess analog | Doc reference | Implementation |
+|---|---|---|---|
+| Subexpression caching | Transposition tables | §4 "cheap algebraic work" | `FunctionalCache` shipped (hit rate 30-80% in non-batched path); **bypassed in the new JAX-batched path** |
+| Bound-based pruning | Alpha-beta | §5.2 | `prune_by_lower_bound=True` flag shipped; **off by default**, MSE-only, scalar-per-candidate not batched |
+| Equivalence-class collapse | Rare in chess | §5.3, §6 conjecture | `simplify_canonical` shipped (rule-based + AC); **no e-graph yet** — only a few % of the theoretical `\|E_K\|/\|T_K\|` compression |
+| Per-complexity incumbent | Bestline | §8 table | `HallOfFame` shipped |
+
+Three out of four levers exist but are *underused*. The fourth
+(equality saturation) is the biggest single unimplemented win and
+remains in `search_as_energy_min.md` as research.
+
+### 12.3 Where the May 2026 GPU work actually landed
+
+Tiers 1-3 (`Measure.apply` JAX path, `compile_tree` jit, batched
+`PopulationEvaluator` vmap) made **per-eval cost** drop sharply.
+That's valuable: the eval-budget per generation goes from O(K · N
+· tree_size) of CPU work to O(K · N · tree_size) of GPU work, with
+~50× constant-factor improvement on Colab GPU at K=200, N=60K.
+
+But that's solving the **wrong half** of the cost asymmetry. The
+perfect-info-game framing predicts we should be doing **fewer evals**
+via:
+
+- Subexpression caching (don't recompute shared sub-trees across
+  candidates)
+- B&B pruning (skip evals provably worse than incumbent)
+- Equivalence collapse (don't even consider syntactically distinct
+  but semantically equivalent trees)
+
+The GPU work made expensive evals cheaper. It did not make the *number*
+of evals smaller. A Stockfish-shaped tessera would do both.
+
+### 12.4 Concrete unrealized opportunities
+
+The MNIST run we're currently shaping is illustrative. The numbers:
+N=1000 balanced samples × K=60 trees × G=20 generations = 1.2M
+tree-evaluations per feature. With Tier-3 vmap+jit this is tractable
+(~30-90 s per feature). But a Knuth-style implementation would:
+
+1. **Hash sub-expressions across the population.** Many candidate
+   trees share `FunctionalOp2D(Laplacian, image)` or
+   `reduce_mean(image)` — these should materialise once per
+   generation, not K times. Current Tier-3 path bypasses
+   `FunctionalCache` because topology-level vmap is incompatible with
+   subexpression-level caching. They are complementary but not
+   integrated.
+
+2. **Batched B&B bound check.** The interval-arithmetic bound
+   (`tessera.expression.interval.interval_evaluate`) is currently
+   scalar-per-tree. Batching the bound check on GPU would let us
+   skip the *full* eval for candidates whose bound exceeds the
+   Pareto incumbent. The reported tightness ratio (median 0.47)
+   says roughly half of candidates *could* be pruned if the check
+   ran.
+
+3. **Equality saturation.** Sketched in `search_as_energy_min.md`.
+   Real e-graph saturation would collapse the population's K
+   candidates into G_eq < K equivalence classes per generation,
+   eliminating redundant evals before they happen. Conservative
+   estimate from §5.3: `|E_K| / |T_K|` is well below 1, probably
+   in the 0.1-0.5 range for tessera's grammar at typical K.
+
+Combined effect, conservatively: another 5-10× fewer actual evals
+on top of the 50× from Tier-3 GPU. Total leverage 250-500× over
+the numpy baseline.
+
+### 12.5 What this means for the doc
+
+§3-§5 are correct as stated. They are not the *whole* story they
+appeared to be when written, because the implementation has only
+partially executed on them. The honest framing is:
+
+> *The perfect-info game framing predicts three levers (caching,
+> pruning, equivalence) and one performance dimension (per-eval
+> speed). Current tessera has shipped partial implementations of all
+> three levers plus a strong GPU port of the speed dimension. The
+> levers are underused; pursuing them fully is the next theoretical-
+> contribution sweep.*
+
+The May 2026 work explicitly chose the fast-eval axis. That was
+the right Goal-3 (MNIST) move because it unblocked the experiment.
+But it's not a substitute for the §5 lever work, and this doc should
+not be read as describing a *finished* system.
+
+### 12.6 Action items (suggested, not committed)
+
+In ascending effort:
+
+| Item | Effort | Doc reference |
+|---|---|---|
+| Enable `prune_by_lower_bound=True` by default for MSE; report pruning rate alongside hit_rate | half day | §5.2 |
+| Batched B&B bound check on GPU (one vmap call over the population's interval evaluations, compare to Pareto incumbent vector) | 1-2 days | §5.2 |
+| Re-integrate `FunctionalCache` into the batched JAX path (subexpression hashing across the population) | 2-3 days | §5.1 / §4 |
+| Equality saturation prototype (snake-egg or hand-rolled e-graph) for tessera's grammar at K≤8; measure `\|E_K\|` empirically | 1-2 weeks | §5.3, §6 |
+| Burnside-bound experiment (§11.3): compute `\|E_K\|` analytically and compare to empirical | 1-2 days | §11.3 |
+
+None of these block the current MNIST experiment. All of them
+sharpen the doc's claims from "framework that predicts" to
+"framework that the implementation actually realises."
+
 ## Changelog
 - 2026-05-25: initial document. Independent companion to
   search_as_energy_min.md.
@@ -623,3 +752,9 @@ MNIST).
   cooperative game with Nash bargaining solution, generalization as
   Stackelberg game with noise as follower. Three actionable
   experiments proposed.
+- 2026-05-24: added §12 (open self-criticism). Honest audit of how the
+  current implementation utilises the framing's predicted levers.
+  Verdict: GPU port (Tiers 1-3) addressed fast-eval but not
+  fewer-evals; three Knuth-style levers (caching, B&B, equality
+  saturation) remain underused. Action items listed for sharpening
+  the doc-implementation gap.

@@ -81,7 +81,7 @@ beats vanilla SR while approaching CNN performance.
 - Wall-clock < 10 minutes per training run
 
 **Sub-targets along the way:**
-- GPU backend Tier 1+ shipped (per `docs/milestones/gpu_backend.md`)
+- GPU backend Tier 1+ shipped (per `docs/shipped/gpu_backend.md`)
 - Axis enforcement in `random_tree` / `mutate` so the search
   respects invariance declarations
 - The axes submodule fuses data representation with SR seamlessly —

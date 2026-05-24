@@ -266,7 +266,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
   19 tests covering construction, all four invariance types, and
   per-operator compatibility (rejects LinearFunctional on permutation,
   FunctionalOp2D on 1-D, etc.).
-- **`docs/framework_synthesis.md`** — maps every shipped tessera
+- **`docs/shipped/framework_synthesis.md`** — maps every shipped tessera
   component to one of SEVEN roles in the Knuth-grounded perfect-info
   game framework. Answers "how do we integrate Knuth's work with our
   diverging implementations?" — the answer is the implementations
@@ -288,7 +288,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
   - 12 tests covering both backends + switching API
   - Top-level re-exports from `tessera.__init__`: `set_backend`,
     `get_backend`, `current`, `Backend`, `NumpyBackend`, `JaxBackend`
-- **`docs/milestones/gpu_backend.md`** — milestone tracking doc. The
+- **`docs/shipped/gpu_backend.md`** — milestone tracking doc. The
   public API is committed; internal porting is broken into 4 tiers
   (measure-apply, tree eval + cache, batched eval, benchmarks)
   totaling ~8-10 days of focused work. Lists acceptance criteria,
@@ -335,7 +335,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
   pooling rule.
 
 ### Added (research notes)
-- **`docs/research_notes/invariance_in_sr.md`** — invariance, sensor
+- **`docs/research/invariance_in_sr.md`** — invariance, sensor
   data, and axis-semantic SR. Argues for making **axis semantics a
   first-class search choice**: every variable carries not just a
   shape but an axis-type declaration (Translation, Permutation,
@@ -357,7 +357,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
 - **`Measure.compose(other)`** — measure convolution `μ * ν` returning
   a new canonical Measure. Maps to the operator-algebra identity
   $L_{\mu * \nu}(x) = L_\mu(L_\nu(x))$ from
-  `docs/research_notes/measure_theory_and_perfect_info.md` §3.3.
+  `docs/research/measure_theory_and_perfect_info.md` §3.3.
   Implementation: `np.convolve` of the two discrete kernels, then
   sparsify into atoms. Tests cover: lag composition, diff*diff = 2nd
   diff, identity element (δ₀), zero element, commutativity,
@@ -378,7 +378,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
   now sorts atoms by lag, merges duplicates (summing weights), and
   drops near-zero atoms. Two semantically identical measures
   constructed in different atom orders now compare equal and have
-  the same hash. Translates `docs/research_notes/measure_theory_and_perfect_info.md`
+  the same hash. Translates `docs/research/measure_theory_and_perfect_info.md`
   §3.1 (Lebesgue decomposition uniqueness) into the actual `Measure`
   type. Downstream effect: FunctionalCache hits on
   mathematically-equivalent measures across mutations, search
@@ -396,14 +396,14 @@ search for trivial ones. Larger pop/gens recovers most ground.
   output by `±||μ_2d||_1 · max(|x.lo|, |x.hi|)`. Closes the last
   conservative-±∞ case in the interval evaluator. Tests:
   test_interval_functional_2d_bounded + test_measure_2d_l1_norm.
-- **`docs/research_notes/gpu_and_cv_via_sr.md`** — honest scoping
+- **`docs/research/gpu_and_cv_via_sr.md`** — honest scoping
   document for "tessera → GPU → CV via SR-evolved architectures."
   Three-stage path (GPU backend → CV benchmarks → SR-as-NAS),
   realistic timelines (1-2 months / 1-2 / 2-3), with section 10
   specifically answering "does Knuth's framework work on GPU?" —
   yes with batched eval, equivalence-class collapse becomes more
   central than branch-and-bound pruning when GPU is available.
-- **`docs/research_notes/measure_theory_and_perfect_info.md`** —
+- **`docs/research/measure_theory_and_perfect_info.md`** —
   theoretical companion to `fit_as_perfect_info_game.md`. Develops
   the argument that tessera's measure-theoretic operator algebra
   ADDS three things to the perfect-information framework: (1) a
@@ -438,7 +438,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
     nested `add`/`mul`/`min`/`max` chains, sorts children by
     `(complexity, str)`, rebuilds left-leaning. Result: `a + b` ≡
     `b + a`, `(a+b)+c` ≡ `a+(b+c)` ≡ `(c+b)+a` (canonical form).
-    Per the perplexity research note (docs/research_notes/
+    Per the perplexity research note (docs/research/
     search_as_energy_min.md), parsimony was "distorted by arbitrary
     syntactic differences" without this; AC norm gives parsimony a
     fair semantic-equivalence-class basis.
@@ -466,10 +466,10 @@ search for trivial ones. Larger pop/gens recovers most ground.
   candidates whose MSE lower bound exceeds the Pareto threshold.
   `GP.prune_stats` reports `n_pruned` / `n_evaluated`. Direct
   operationalisation of the "SR-for-fit as energy minimisation with
-  full data information" framing (docs/research_notes/
+  full data information" framing (docs/research/
   search_as_energy_min.md, validated by perplexity research as a
   "significant research opportunity").
-- **`docs/research_notes/fit_as_perfect_info_game.md`** — independent
+- **`docs/research/fit_as_perfect_info_game.md`** — independent
   research framework: SR-for-fit as a single-agent perfect-information
   game in the Knuth tradition. Develops the chess-game analogy from
   the user's 2026-05-24 session into a formal framework grounded in
@@ -513,7 +513,7 @@ search for trivial ones. Larger pop/gens recovers most ground.
   than tying via shared C. Supports `target_mode="delta"` for
   non-stationary / trending series with a per-coordinate
   mean-delta correction so constant slope is representable. 13
-  tests in `tests/koopman/`. See [`docs/koopman.md`](docs/koopman.md).
+  tests in `tests/koopman/`. See [`docs/shipped/koopman.md`](docs/shipped/koopman.md).
 - **`tessera.expression.tree`** — Five Node types (Var, Const, BinOp,
   UnOp, FunctionalOp) as frozen tagged-union dataclasses. Pointwise op
   tables (add/sub/mul/div/min/max, tanh/abs/sign/neg). Structural

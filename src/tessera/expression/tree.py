@@ -110,7 +110,7 @@ BIN_OP_FNS: dict[str, Callable] = {
     "max":  lambda a, b: array_module(a if hasattr(a, "shape") else b).maximum(a, b),
     # Threshold indicators — return float64 {0.0, 1.0} per element.
     # Bridge to EML-style binary-window primitives without needing a
-    # dedicated WeightedIndicatorSum operator (see docs/roadmap.md §3).
+    # dedicated WeightedIndicatorSum operator (see docs/planned/roadmap.md §3).
     "gt":   lambda a, b: _indicator("gt", a, b),
     "lt":   lambda a, b: _indicator("lt", a, b),
     "ge":   lambda a, b: _indicator("ge", a, b),
@@ -222,7 +222,7 @@ UN_OP_FNS: dict[str, Callable] = {
     "exp":  _safe_exp,
     # Reductions: array → scalar. Always reduce ALL axes. Used to convert
     # a 2-D feature map into a translation-invariant scalar prediction
-    # (see docs/research_notes/invariance_in_sr.md). The GP can place
+    # (see docs/research/invariance_in_sr.md). The GP can place
     # these anywhere; downstream BinOps will numpy-broadcast the scalar.
     "reduce_mean": _reduce_mean,
     "reduce_max":  _reduce_max,

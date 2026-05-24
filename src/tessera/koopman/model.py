@@ -1,4 +1,4 @@
-"""LatentKoopman — closed-form implementation per docs/koopman.md.
+"""LatentKoopman — closed-form implementation per docs/shipped/koopman.md.
 
 Reduced-rank one-step prediction operator → SVD → separate encoder/decoder.
 """

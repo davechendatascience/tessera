@@ -1,7 +1,7 @@
 """Tier 1 GPU backend port — verification that `evaluate(tree, env)` and
 `Measure.apply` work end-to-end with JAX arrays.
 
-What Tier 1 covers (per docs/milestones/gpu_backend.md):
+What Tier 1 covers (per docs/shipped/gpu_backend.md):
 - `array_module(x)` returns `jax.numpy` for JAX inputs, `numpy` for numpy
 - All BIN_OP_FNS / UN_OP_FNS produce JAX arrays when given JAX inputs
 - `Measure.apply(jax_array)` returns a JAX array (kernel-materialise path)

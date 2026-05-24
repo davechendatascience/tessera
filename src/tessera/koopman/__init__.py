@@ -1,6 +1,6 @@
 """tessera.koopman — explicit-latent Koopman with time-delay embedding.
 
-Implements the closed-form latent Koopman per docs/koopman.md:
+Implements the closed-form latent Koopman per docs/shipped/koopman.md:
 
     Encoder    E : pd → k         (past-stack to latent, SVD of prediction operator)
     Koopman    K : k → k          (linear dynamics on latent)

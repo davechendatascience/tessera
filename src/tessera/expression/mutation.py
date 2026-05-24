@@ -452,7 +452,7 @@ def collapse_functional_chain(tree: Node, rng: random.Random) -> Node:
         FunctionalOp(LinearFunctional(μ ∗ ν), (x,))
 
     This is the measure-algebra identity `L_μ(L_ν(x)) ≡ L_{μ∗ν}(x)`
-    from docs/research_notes/measure_theory_and_perfect_info.md §3.3.
+    from docs/research/measure_theory_and_perfect_info.md §3.3.
     Strictly reduces tree node count (typically by ~3 nodes), and the
     composed measure is automatically canonicalised by
     `Measure.__post_init__`.

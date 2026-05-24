@@ -230,7 +230,7 @@ pytest tests/expression/
 ## What's planned
 
 - **Equality saturation** (egg / snake-egg) — see
-  [`docs/research_notes/search_as_energy_min.md`](../../../docs/research_notes/search_as_energy_min.md)
+  [`docs/research/search_as_energy_min.md`](../../../docs/research/search_as_energy_min.md)
   for the design
 - **Time-varying kernels** K(s, t) — non-stationary functional analogues
 - **Wavelet density family** as a registered kernel

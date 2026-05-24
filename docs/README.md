@@ -1,0 +1,43 @@
+# Tessera documentation index
+
+This directory is organised by **status**, not by topic. Three subdirs:
+
+| Subdir | What lives here |
+|---|---|
+| [`shipped/`](shipped/) | Designs for features that ARE in the library now. Read these to understand how a shipped piece works. |
+| [`planned/`](planned/) | Committed-to-build items that are NOT in the library yet. Each item has an explicit status flag (open / in progress / blocked). |
+| [`research/`](research/) | Open-ended exploration. Not committed to ship. Foundational ideas, conjectures, scoping documents. |
+
+Top-level files (`README.md` and `PROJECT_GOALS.md`) span all three.
+
+## Status legend
+
+Inside any individual doc, items are flagged with:
+
+- **✓ DONE** — implemented, tested, released
+- **▷ IN PROGRESS** — actively being built; expect a working commit within days
+- **○ PLANNED** — committed-to-build; not started; effort estimated
+- **? RESEARCH** — exploration; outcome uncertain; may or may not lead to implementation
+- **× DEFERRED** — was planned, explicitly postponed (with reason)
+
+## Where to start
+
+| If you want to... | Read |
+|---|---|
+| Know what tessera IS and what it's for | [`../README.md`](../README.md) (top-level) + [`PROJECT_GOALS.md`](PROJECT_GOALS.md) |
+| Understand how the shipped pieces fit together | [`shipped/framework_synthesis.md`](shipped/framework_synthesis.md) |
+| Use the GPU backend | [`shipped/gpu_backend.md`](shipped/gpu_backend.md) |
+| Use the Koopman module | [`shipped/koopman.md`](shipped/koopman.md) |
+| See what's planned next | [`planned/roadmap.md`](planned/roadmap.md) |
+| Read the theoretical framework | [`research/fit_as_perfect_info_game.md`](research/fit_as_perfect_info_game.md) |
+| Understand the search-as-energy-min direction | [`research/search_as_energy_min.md`](research/search_as_energy_min.md) |
+| See the measure-theory + perfect-info bridge | [`research/measure_theory_and_perfect_info.md`](research/measure_theory_and_perfect_info.md) |
+| Read about axis-aware SR / invariance | [`research/invariance_in_sr.md`](research/invariance_in_sr.md) |
+| See the GPU + CV scoping | [`research/gpu_and_cv_via_sr.md`](research/gpu_and_cv_via_sr.md) |
+
+## Organisational principles
+
+1. **Status before topic.** A doc lives in `shipped/`, `planned/`, or `research/` first, and only then is organised by topic within that bucket. This forces every doc to declare its maturity.
+2. **One doc, one status.** A doc that's "half done, half open" is a code smell — split it into a shipped portion (what works today) and a research/planned portion (what's still open).
+3. **No mixed `roadmap.md`.** Done items live in `shipped/` (or the changelog). The roadmap is *only* open items.
+4. **Cross-references use full paths.** Internal links say `docs/shipped/foo.md`, not `foo.md`, so moving a file later doesn't silently break references.
