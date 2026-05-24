@@ -70,22 +70,6 @@ These items were promoted from `docs/research/high_dim_symbolic_regression.md` �
 
 **Acceptance criterion:** with `prune_by_lower_bound=True` (default for MSE), the GP run on a Feynman benchmark equation prunes ≥ 30% of candidates per generation (median across 5 seeds) without changing the Pareto front it returns. Wall-clock per generation drops by ≥ 20% over the same problem without pruning.
 
-### 2.3 Add `atan2`, `acos`, `asin` primitives ○ PLANNED
-
-**Origin:** [`docs/research/sr_for_inverse_kinematics.md`](../research/sr_for_inverse_kinematics.md) §6.1 (empirically justified by the Tier-D result on the 3-DoF planar IK benchmark — see "Recently shipped" below).
-
-**What:** add three trig-inverse primitives to `UN_OP_FNS` / `BIN_OP_FNS`:
-- `atan2(y, x)` — binary; quadrant-aware arctangent. Range `[-π, π]`.
-- `acos(x)` — unary; needs `x` clipped to `[-1, 1]` as a protected form (analog of `sqrt(|x|)` / `log(max(|x|, ε))`).
-- `asin(x)` — unary; same clipping.
-
-Plus interval bounds, op_swap groups, and simplifier folds (`acos(1)=0`, `asin(0)=0`, etc.). Same lifecycle pattern as the sin/cos ship (#1).
-
-**Why now:** the 3-DoF planar IK benchmark (just shipped) is Tier-D *specifically because of these missing ops*. q2 trial-discovered `sqrt(0.97 + cos(x) + cos(y) + cos(y) + ...)` — algebraic approximation of `acos((r²-2)/2)`. q1/q3 use indicator combinations to approximate `atan2`'s quadrant-awareness. Adding these three primitives is the directly-supported next step.
-
-**Effort:** ~half day, contained. Mechanical extension of the sin/cos pattern. Tests + IK benchmark re-run.
-
-**Acceptance criterion:** after these primitives ship, re-running `benchmarks/run_ik_planar_3dof.py` moves the result from Tier D to **at least Tier B** (≥1 joint exact, ≤1 failed). Tier A (all 3 exact) is the optimistic case. If even with the new primitives the result stays Tier D, that's evidence the limit is search budget / random_tree distribution, not vocabulary.
 
 ## 3. Reading list
 
@@ -135,7 +119,8 @@ Done items previously listed here have been moved to:
 
 | Item | Status | Where |
 |---|---|---|
-| 3-DoF planar IK benchmark (Tier-D result) | ✓ DONE | `benchmarks/run_ik_planar_3dof.py` + `benchmarks/results/ik_planar_3dof.md`. Tier D proved the atan2/acos gap empirically; promoted §2.3 above. |
+| `atan2`, `acos`, `asin` primitives | ✓ DONE | `tessera.expression.tree.UN_OP_FNS` + `BIN_OP_FNS`; 16 new tests. IK rerun stayed Tier D — vocab fix didn't help (see below). |
+| 3-DoF planar IK benchmark (Tier-D result, both runs) | ✓ DONE | `benchmarks/run_ik_planar_3dof.py` + `benchmarks/results/ik_planar_3dof.md`. Run 2 with atan2/acos/asin: still Tier D. GP doesn't USE the new ops — search-space-explosion failure mode. Documented in `network_sr_and_budget_allocation.md`. |
 | `jax.grad` constant optimisation (`optimize_constants_jax`) | ✓ DONE | `tessera.search.const_opt`; GPConfig.optimize_constants_method='jax_adam' |
 | Trigonometric primitives (`sin`, `cos`) | ✓ DONE | `tessera.expression.tree.UN_OP_FNS`; from `docs/research/benchmark_score_improvement.md` §4.1 |
 | Hall of Fame (per-cx best-ever store) | ✓ DONE | `tessera.search.HallOfFame`; see `src/tessera/search/README.md` |

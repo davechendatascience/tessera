@@ -356,6 +356,9 @@ _OP_SWAP_GROUPS: list[set[str]] = [
     {"abs", "neg"},
     {"sqrt", "log", "exp"},
     {"sin", "cos"},
+    {"acos", "asin"},
+    # atan2 stands alone — no obvious binary swap partner; pow / div /
+    # mul have different output domains.
 ]
 
 

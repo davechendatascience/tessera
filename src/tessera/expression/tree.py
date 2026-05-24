@@ -118,6 +118,13 @@ BIN_OP_FNS: dict[str, Callable] = {
     # Protected power: pow(|a|, clip(b, ±8)). Drops sign of base; use
     # sign(a)*pow(|a|, b) for signed forms. Matches PySR's safe_pow.
     "pow":  _safe_pow,
+    # Two-argument arctangent. Quadrant-aware: atan2(y, x) gives the
+    # angle of the (x, y) vector. Range [-π, π]. Well-defined at (0, 0)
+    # = 0 (numpy convention). Standard SR-for-physics primitive; needed
+    # by the IK benchmark q1/q3 formulas.
+    "atan2": lambda y, x: array_module(y if hasattr(y, "shape") else x).arctan2(
+                            _as_float(array_module(y if hasattr(y, "shape") else x), y),
+                            _as_float(array_module(y if hasattr(y, "shape") else x), x)),
 }
 BIN_OPS = tuple(BIN_OP_FNS.keys())
 
@@ -213,6 +220,20 @@ def _cos(x):
     return xp.cos(_as_float(xp, x))
 
 
+def _safe_acos(x):
+    """Protected acos: acos(clip(x, [-1, 1])). Domain restriction is the
+    standard SR convention; matches PySR's protected `acosh`/`asinh`
+    style. Range [0, π]."""
+    xp = array_module(x)
+    return xp.arccos(xp.clip(_as_float(xp, x), -1.0, 1.0))
+
+
+def _safe_asin(x):
+    """Protected asin: asin(clip(x, [-1, 1])). Range [-π/2, π/2]."""
+    xp = array_module(x)
+    return xp.arcsin(xp.clip(_as_float(xp, x), -1.0, 1.0))
+
+
 def _step(x):
     xp = array_module(x)
     return (xp.asarray(x) > 0.0).astype(xp.float64)
@@ -239,6 +260,13 @@ UN_OP_FNS: dict[str, Callable] = {
     # default).
     "sin":  _sin,
     "cos":  _cos,
+    # Inverse trig with input clipped to the valid domain [-1, 1].
+    # Required by the 3-DoF planar IK benchmark (q2 = acos((r²-2)/2))
+    # and many Feynman-style geometry equations. Output ranges:
+    # acos → [0, π]; asin → [-π/2, π/2]. atan2 (the 2-arg form) is
+    # in BIN_OP_FNS, since it takes two arguments.
+    "acos": _safe_acos,
+    "asin": _safe_asin,
     # Reductions: array → scalar. Always reduce ALL axes. Used to convert
     # a 2-D feature map into a translation-invariant scalar prediction
     # (see docs/research/invariance_in_sr.md). The GP can place

@@ -226,10 +226,18 @@ def _ival_pow(a: Interval, b: Interval) -> Interval:
     return Interval(max(0.0, min(corners)), max(corners))
 
 
+def _ival_atan2(y: Interval, x: Interval) -> Interval:
+    """atan2: output always in [-π, π]. Tighter bounds possible based on
+    quadrant of the input interval; deferred for now (matches conservative
+    sin/cos approach)."""
+    return Interval(-math.pi, math.pi)
+
+
 _BIN_IVAL_FNS = {
     "add": _ival_add, "sub": _ival_sub, "mul": _ival_mul, "div": _ival_div,
     "min": _ival_min, "max": _ival_max,
     "pow": _ival_pow,
+    "atan2": _ival_atan2,
 }
 
 
@@ -359,11 +367,22 @@ def _ival_cos(a: Interval) -> Interval:
     return Interval(-1.0, 1.0)
 
 
+def _ival_acos(a: Interval) -> Interval:
+    """acos: input clipped to [-1, 1]; output always in [0, π]."""
+    return Interval(0.0, math.pi)
+
+
+def _ival_asin(a: Interval) -> Interval:
+    """asin: input clipped to [-1, 1]; output in [-π/2, π/2]."""
+    return Interval(-math.pi / 2, math.pi / 2)
+
+
 _UN_IVAL_FNS = {
     "neg": _ival_neg, "abs": _ival_abs, "tanh": _ival_tanh,
     "sign": _ival_sign, "step": _ival_step,
     "sqrt": _ival_sqrt, "log": _ival_log, "exp": _ival_exp,
     "sin": _ival_sin, "cos": _ival_cos,
+    "acos": _ival_acos, "asin": _ival_asin,
     "reduce_mean": _ival_reduce_minmax,
     "reduce_max":  _ival_reduce_minmax,
     "reduce_sum":  _ival_reduce_sum,

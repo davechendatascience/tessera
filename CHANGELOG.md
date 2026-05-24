@@ -6,6 +6,128 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (`atan2`/`acos`/`asin` primitives + IK rerun reveals new failure mode)
+
+Per `docs/planned/roadmap.md` §2.3 (now in "Recently shipped").
+Lifecycle ship pattern walked again, but with a non-obvious empirical
+outcome that informs the next research direction.
+
+**Primitives shipped:**
+- `atan2(y, x)` in `BIN_OP_FNS` (quadrant-aware arctangent; range `[-π, π]`)
+- `acos(x)` in `UN_OP_FNS` — protected (input clipped to `[-1, 1]`)
+- `asin(x)` in `UN_OP_FNS` — protected (input clipped to `[-1, 1]`)
+
+Interval bounds: conservative ranges for each (`atan2`: `[-π, π]`;
+`acos`: `[0, π]`; `asin`: `[-π/2, π/2]`). Op-swap groups: `{acos, asin}`
+new; `atan2` stands alone (no semantic swap partner).
+
+**16 new tests** in `tests/expression/test_atan2_acos_asin.py`:
+- Op-table registration (BIN_OPS, UN_OPS, _BIN_IVAL_FNS, _UN_IVAL_FNS)
+- Constructor accepts new ops
+- Quadrant correctness for atan2; protected-clipping for acos/asin
+- Identity checks: `sin(asin(x)) = x`, `cos(acos(x)) = x`,
+  `atan2(sin(θ), cos(θ)) = θ`
+- Interval bounds
+- Simplifier constant-folding (acos(1)=0, asin(0)=0, atan2(0,1)=0, etc.)
+- Op-swap behaviour
+- JAX evaluate-path compatibility
+
+**Critical empirical finding from the IK benchmark rerun:**
+
+After shipping atan2/acos/asin, `benchmarks/run_ik_planar_3dof.py` was
+re-run. Result: **still Tier D**. q1=0.34, q2=0.78, q3=0.30 — barely
+different from run 1 (sin/cos only).
+
+Inspecting the discovered trees: **none of them use atan2, acos, or
+asin**. The GP found compositions of the pre-existing ops (cos, pow,
+tanh, exp, comparisons) just as it did in run 1.
+
+**Diagnosis: search-space-explosion, not vocabulary.** With ~30 ops
+in the alphabet and uniform random sampling, each new op has ~3%
+probability per tree slot. Composing the right IK formula (e.g.,
+`atan2(y_w, x_w) - atan2(sin(q2), 1+cos(q2))`) requires multi-op
+compositions at probabilities like `0.03² ≈ 0.1%`. The search budget
+(pop=300 × gens=60) provides ~18K trees, but the right composition
+appears in an exponentially-tiny fraction of them. The GP "had access"
+to the right primitives but never tried them in the right structure.
+
+This is exactly the failure mode catalogued in
+`high_dim_symbolic_regression.md` §3 (theoretical analysis #1:
+combinatorial explosion in tree space).
+
+**Failure-mode taxonomy update:**
+
+| Run | Vocab | Tier | Failure mode |
+|---|---|---|---|
+| 1 | sin/cos only | D | Vocabulary insufficient |
+| 2 | + atan2/acos/asin | D | **Search-space explosion** (new) |
+
+This is a structurally different problem from run 1. Two candidate
+fixes (in the result file's interpretation section):
+
+1. **Op-weight scheduling** — bias OP_WEIGHTS toward new ops in early
+   gens, anneal toward uniform. ~30 LOC. Analogous to PySR's annealed
+   mutation temperature (already planned, `roadmap.md` §1.2).
+2. **Template-based mutations** — explicit `template_atan2_composition`
+   mutation that wraps two subtrees as `atan2(a, b)`. Was research-only
+   (`benchmark_score_improvement.md` §4.2); this benchmark result
+   promotes it in priority.
+
+### Added (research note: network-SR + budget allocation under perfect info)
+
+New `docs/research/network_sr_and_budget_allocation.md` (9 sections).
+
+User's evolving framing 2026-05-24:
+- "Knuth's category" was inspirational, not a final design
+- The vision: network of specialised SR units, with assignment via
+  Knuth-style discrete-combinatorial algorithm; per-unit SR continues
+  via continuous numerical search. Bridge between discrete and
+  continuous math.
+- Gemini suggested MCTS rollouts; user pushback: "I don't think
+  incremental rollout is very good."
+- Game-theoretic refinement: "measured loss value is NOT committed
+  moves; the game evolving strategy needs to be BASED ON perfect
+  information."
+
+**The doc's central reframing:**
+
+The landscape of (tree, loss) pairs IS perfect information — fully
+determined. Past evaluations don't "commit moves"; they *reveal*
+parts of an already-deterministic landscape. The eval-budget-
+constrained strategy must therefore be GROUNDED in deterministic
+admissible search (B&B, A*, IDA*), NOT in bandit/MCTS stochastic
+exploration.
+
+**Bandit/MCTS explicitly rejected** (table in §3): bandits assume
+stochastic environment + Bayesian belief updates. SR-for-fit's
+environment is deterministic; treating it as a bandit imports
+unnecessary uncertainty machinery.
+
+**The user's two thoughts unified** (§5):
+- "Network-SR" (architecture: specialised units + assignment) and
+- "Strategy under budget but still perfect info" (search-time)
+are the SAME question at different abstraction levels — both ask
+"how do we allocate eval budget under deterministic-but-not-yet-
+known costs?"
+
+**Five open questions (§6)** for further research before any
+implementation commitment:
+1. Right deterministic budget-aware strategy for SR (Korf IDA*,
+   Knuth B&B)
+2. Does op-weight scheduling close the IK Tier-D gap?
+3. Does template-based mutation close it?
+4. If neither, is network-SR with a unit specifically for IK the
+   answer?
+5. Theory: bridge between B&B's heuristic and the "perfect-info
+   game" framing
+
+**Order of empirical pursuit** (§7): try (2) op-weight scheduling
+first — cheapest test of the "vocabulary present but unused"
+hypothesis. If that fails, (3) template mutation. If both fail,
+then network-SR architecture becomes the lever.
+
+**Test count: 524 passing** (was 508; +16 atan2/acos/asin tests).
+
 ### Added (3-DoF planar IK benchmark — Tier-D result confirms atan2/acos gap)
 
 New `benchmarks/run_ik_planar_3dof.py` + result file
