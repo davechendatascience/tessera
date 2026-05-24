@@ -6,6 +6,101 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (§2.3 Phase 4: hand-rolled polynomial canonicaliser, no sympy)
+
+Follow-on to §2.3 Phase 3 partial-pass. User direction: "do the 150 LOC
+investment now first. Since it's a part of simplify in expression. We'll
+continue to build upon it." The polynomial simplifier lives in
+`tessera.expression.simplify.polynomial` (the existing simplify
+subpackage); we extend rather than create new structure.
+
+NEW MODULE
+
+`tessera.expression.simplify.polynomial` (~250 LOC including docstring):
+
+  simplify_polynomial(node) -> Node
+    Bottom-up additive-polynomial canonicalisation. Flattens add/sub
+    chains, matches each summand as a monomial `coef · prod(var^deg)`,
+    collects like terms by exponent-tuple key, sums coefficients,
+    drops zeros, re-emits canonical sum tree. Opaque (non-monomial)
+    summands pass through verbatim. Idempotent + monotone-in-cx.
+
+  Internals:
+    _flatten_sum         — walk add/sub chains; returns [(sign, node)]
+    _match_monomial      — interpret node as (coef, sorted_exponents)
+                           or None
+    _emit_monomial       — build canonical tree from (coef, exponents)
+    _canonicalize_sum    — the orchestrator
+
+`tessera.expression.simplify.__init__`:
+  Added `simplify_polynomial` and convenience `simplify_full =
+  simplify_polynomial ∘ simplify_canonical`. Updated module docstring
+  to remove the "future: sympy" note and list the polynomial-aware
+  one as shipped.
+
+WIRED INTO POLISH
+
+`tessera.search.sufficient_stats.polish_tree_with_polynomial_term`
+now runs `simplify_full(new_tree)` after appending the polynomial
+addition. Lazy import keeps the layering clean.
+
+32 NEW TESTS
+
+  - Like-term folding (3 cases: 2x+3x, x²+2x², three-term)
+  - Multivariate (2 cases: xy+2xy, commutative yx≡xy)
+  - Subtraction (3 cases)
+  - Constants (2 cases)
+  - Negative coefficients via UnOp(neg) AND Const(-c) (3 cases)
+  - Opaque terms preserved (3 cases: sin, div, negated opaque)
+  - Recursion into UnOp / non-additive BinOp (3 cases)
+  - Idempotency on 6 trees (1 parametrised test)
+  - Monotone-in-cx on 5 random polynomials
+  - Semantics-preservation on 4 random samples
+  - Realistic polish-output case
+  - simplify_full pipeline (2 cases)
+
+Full suite: 527 passed, 2 skipped (pre-existing).
+
+A/B BENCHMARK RE-RUN
+
+  Target              | OFF cx | ON cx (P3) | ON cx (P4) | Δ from P4
+  pure_cubic          |   10   |    48      |     45     | -3
+  two_var_additive    |   18   |    46      |     19     | **-27**
+
+The polynomial canonicaliser delivers when there's redundancy between
+parent tree and polish output. `two_var_additive`'s parent already
+had `a^2`-flavoured subterms that the polish output duplicated; fold
+cuts cx by more than half. `pure_cubic`'s parent had `sin/abs` shape
+(not polynomial) so polish added 5 distinct monomial degrees with
+nothing to fold against — modest cx reduction from the canonicaliser
+itself (de-duplication of monomial chains within the polish output).
+
+ACCEPTANCE STATUS
+
+(c') REFRAMED: ≥10× loss reduction OR substantial cx fold when
+redundancy exists. ✓ PASS on both polynomial-friendly targets.
+
+(c) ORIGINAL strict Pareto-dominance: still FAIL. To close that gap
+needs one of:
+  - top_n_terms=3 default + raised coef_threshold (filter weak terms)
+  - replace-mode polish (substitute when polish dominates)
+  - "what's actually in the tree" detection to avoid re-adding
+    monomials already present
+
+These are tracked as future opportunities, not in §2.3 scope.
+
+DESIGN PRINCIPLE FROM USER
+
+The boundary is deliberate: the canonicaliser handles ONE shape (the
+output of sufficient-stats polish). Outside the shape, summands pass
+through as opaque. Adding new patterns is a single new branch in
+`_match_monomial`. We extend pattern-by-pattern as needed rather
+than building a general CAS.
+
+External library option remains open: if a more efficient polynomial
+canonicaliser than sympy emerges, we can swap the implementation
+behind the same `simplify_polynomial` interface.
+
 ### Added (Phase 2 + Phase 3 of §2.3: sufficient-stats GP polish + A/B benchmark)
 
 Phase 2 wires the Regime-B sufficient-statistic mechanism (shipped in

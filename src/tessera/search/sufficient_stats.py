@@ -425,5 +425,12 @@ def polish_tree_with_polynomial_term(
     if addition is None:
         return tree, 0.0, 0
     new_tree = BinOp(op="add", a=tree, b=addition)
+    # Run the polynomial canonicaliser to collect any like-terms between
+    # the parent tree and the freshly-appended polynomial. This is the
+    # close-of-loop on the §2.3 partial-pass: without it, polish-output
+    # cx is dominated by appended duplicates of monomials the parent
+    # already contained. Lazy import for layering safety.
+    from tessera.expression.simplify import simplify_full
+    new_tree = simplify_full(new_tree)
     return new_tree, float(expected_dl), kept
 
