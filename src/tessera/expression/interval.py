@@ -195,9 +195,41 @@ def _ival_compare(a: Interval, b: Interval, op: str) -> Interval:
     return Interval(0.0, 1.0)
 
 
+def _ival_pow(a: Interval, b: Interval) -> Interval:
+    """Protected pow: pow(|a|, clip(b, ±8)). Output is non-negative.
+
+    Bound logic: base ∈ [max(0, ε), max(|a.lo|, |a.hi|)]; exp clipped to
+    [-8, +8]. Use monotonicity in exp when base is fixed >=1 or <=1 to
+    derive endpoint bounds; conservative fallback to [0, +inf]."""
+    # Output is non-negative (sign-dropped).
+    abs_a = _ival_abs(a)
+    base_lo = max(abs_a.lo, 1e-12)
+    base_hi = abs_a.hi
+    if not math.isfinite(base_hi):
+        return Interval(0.0, math.inf)
+    exp_lo = max(b.lo, -8.0)
+    exp_hi = min(b.hi, 8.0)
+    if exp_lo > exp_hi:
+        # exponent interval entirely outside clip range → degenerate; conservative
+        return Interval(0.0, math.inf)
+    # Evaluate at the four corners (base_lo/hi, exp_lo/hi).
+    corners = []
+    for base in (base_lo, base_hi):
+        for exp in (exp_lo, exp_hi):
+            try:
+                v = base ** exp
+            except (OverflowError, ValueError):
+                v = math.inf
+            if math.isnan(v):
+                v = math.inf
+            corners.append(v)
+    return Interval(max(0.0, min(corners)), max(corners))
+
+
 _BIN_IVAL_FNS = {
     "add": _ival_add, "sub": _ival_sub, "mul": _ival_mul, "div": _ival_div,
     "min": _ival_min, "max": _ival_max,
+    "pow": _ival_pow,
 }
 
 
@@ -280,9 +312,40 @@ def _ival_reduce_std(a: Interval) -> Interval:
     return Interval(0.0, math.inf)
 
 
+def _ival_sqrt(a: Interval) -> Interval:
+    """Protected sqrt: sqrt(|x|). Output is non-negative; monotone in |x|."""
+    abs_a = _ival_abs(a)
+    lo = math.sqrt(abs_a.lo) if math.isfinite(abs_a.lo) else math.inf
+    hi = math.sqrt(abs_a.hi) if math.isfinite(abs_a.hi) else math.inf
+    return Interval(lo, hi)
+
+
+def _ival_log(a: Interval) -> Interval:
+    """Protected log: log(max(|x|, 1e-12)). Monotone in |x|."""
+    abs_a = _ival_abs(a)
+    lo_x = max(abs_a.lo, 1e-12)
+    hi_x = max(abs_a.hi, 1e-12)
+    lo = math.log(lo_x)
+    hi = math.log(hi_x) if math.isfinite(hi_x) else math.inf
+    return Interval(lo, hi)
+
+
+def _ival_exp(a: Interval) -> Interval:
+    """Protected exp: exp(clip(x, ±50)). Monotone; tight bounds via clip."""
+    lo_x = max(a.lo, -50.0)
+    hi_x = min(a.hi, 50.0)
+    if lo_x > hi_x:
+        # input interval entirely above +50 or below -50 → clip collapses
+        clipped = 50.0 if a.lo > 50.0 else -50.0
+        v = math.exp(clipped)
+        return Interval(v, v)
+    return Interval(math.exp(lo_x), math.exp(hi_x))
+
+
 _UN_IVAL_FNS = {
     "neg": _ival_neg, "abs": _ival_abs, "tanh": _ival_tanh,
     "sign": _ival_sign, "step": _ival_step,
+    "sqrt": _ival_sqrt, "log": _ival_log, "exp": _ival_exp,
     "reduce_mean": _ival_reduce_minmax,
     "reduce_max":  _ival_reduce_minmax,
     "reduce_sum":  _ival_reduce_sum,

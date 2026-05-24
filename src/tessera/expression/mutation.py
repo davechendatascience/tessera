@@ -350,10 +350,11 @@ def term_delete(
 
 _OP_SWAP_GROUPS: list[set[str]] = [
     {"add", "sub"},
-    {"mul", "div"},
+    {"mul", "div", "pow"},
     {"min", "max"},
     {"tanh", "sign"},
     {"abs", "neg"},
+    {"sqrt", "log", "exp"},
 ]
 
 

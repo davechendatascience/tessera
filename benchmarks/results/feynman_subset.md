@@ -5,37 +5,37 @@ representative equations from the Feynman dataset (Udrescu & Tegmark
 2020). The full benchmark has 100 equations; this subset spans
 trivial-product to non-trivial Lorentz boost in ~2 minutes total.
 
-**GP config:** pop=120, gens=40, pointwise_only=True, optimize_constants every 3 gens (Nelder-Mead, 30 iter).
+**GP config:** pop=200, gens=80, pointwise_only=True, optimize_constants every 3 gens (Nelder-Mead, 30 iter). Alphabet includes protected sqrt/exp/log/pow.
 **Samples per equation:** 2000
-**Total wall-clock:** 3.1s
+**Total wall-clock:** 12.6s
 
 ## Results
 
 | # | Eq ID | True formula | n_vars | best cx | best loss | rel to var | runtime (s) |
 |---|---|---|---|---|---|---|---|
-| 1 | I.6.20a | `exp(-theta^2/2)` | 1 | 10 | 0.001395 | 0.0209 | 1.2 |
-| 2 | I.8.14 | `sqrt((x2-x1)^2+(y2-y1)^2)` | 4 | 1 | 0.2407 | 1.0000 | 0.1 |
-| 3 | I.12.1 | `mu*Nn` | 2 | 3 | 0 | 0.0000 | 0.1 |
-| 4 | I.12.5 | `q1*q2/r^2` | 3 | 19 | 0.2609 | 0.0468 | 0.6 |
-| 5 | I.14.3 | `m*g*z` | 3 | 5 | 0 | 0.0000 | 0.2 |
-| 6 | I.15.3t | `(x - u*t)/sqrt(1 - u^2/c^2)` | 4 | 7 | 0.003665 | 0.0022 | 0.3 |
-| 7 | I.27.6 | `d1*d2/(d1+d2)` | 2 | 7 | 0.01243 | 0.0640 | 0.4 |
-| 8 | I.43.31 | `k*T/(6*pi*eta*r)` | 4 | 9 | 0.006163 | 0.9983 | 0.2 |
+| 1 | I.6.20a | `exp(-theta^2/2)` | 1 | 9 | 8.108e-05 | 0.0012 | 1.4 |
+| 2 | I.8.14 | `sqrt((x2-x1)^2+(y2-y1)^2)` | 4 | 11 | 0.05184 | 0.2153 | 1.0 |
+| 3 | I.12.1 | `mu*Nn` | 2 | 3 | 0 | 0.0000 | 0.3 |
+| 4 | I.12.5 | `q1*q2/r^2` | 3 | 22 | 0.3488 | 0.0626 | 2.0 |
+| 5 | I.14.3 | `m*g*z` | 3 | 25 | 35.66 | 0.0959 | 2.8 |
+| 6 | I.15.3t | `(x - u*t)/sqrt(1 - u^2/c^2)` | 4 | 15 | 0.04554 | 0.0271 | 1.4 |
+| 7 | I.27.6 | `d1*d2/(d1+d2)` | 2 | 14 | 0.0148 | 0.0762 | 0.9 |
+| 8 | I.43.31 | `k*T/(6*pi*eta*r)` | 4 | 21 | 0.001639 | 0.2655 | 2.9 |
 
 ## Discovered expressions
 
 ### I.6.20a
 - True: `exp(-theta^2/2)`
-- Best tree (cx=10, rel=0.0209):
+- Best tree (cx=9, rel=0.0012):
   ```
-  tanh((((2.38931 >= theta) / 1.5119) / (theta * theta)))
+  pow((1.26805 + abs((0.599673 - theta))), neg(theta))
   ```
 
 ### I.8.14
 - True: `sqrt((x2-x1)^2+(y2-y1)^2)`
-- Best tree (cx=1, rel=1.0000):
+- Best tree (cx=11, rel=0.2153):
   ```
-  1.0338
+  ((0.33584 + pow((y2 - y1), 0.699077)) - (x1 * x2))
   ```
 
 ### I.12.1
@@ -47,37 +47,37 @@ trivial-product to non-trivial Lorentz boost in ~2 minutes total.
 
 ### I.12.5
 - True: `q1*q2/r^2`
-- Best tree (cx=19, rel=0.0468):
+- Best tree (cx=22, rel=0.0626):
   ```
-  (((q2 / r) + ((q2 + max(-0.339185, ((q1 + q1) - (r + r)))) - 1.79053)) / r)
+  (((q1 / r) + min(-0.039862, q1)) + min(exp((q2 - (r * r))), ((q1 / r) + (q1 / r))))
   ```
 
 ### I.14.3
 - True: `m*g*z`
-- Best tree (cx=5, rel=0.0000):
+- Best tree (cx=25, rel=0.0959):
   ```
-  ((g * m) * z)
+  ((((((-9.97212 + m) + (m * m)) + (z > g)) + min(m, z)) + min(m, z)) + (z * pow(g, 1.61458)))
   ```
 
 ### I.15.3t
 - True: `(x - u*t)/sqrt(1 - u^2/c^2)`
-- Best tree (cx=7, rel=0.0022):
+- Best tree (cx=15, rel=0.0271):
   ```
-  (0.0509949 + (x - (t * u)))
+  ((0.18816 + pow(u, t)) + (((x - log(sqrt(t))) - u) - u))
   ```
 
 ### I.27.6
 - True: `d1*d2/(d1+d2)`
-- Best tree (cx=7, rel=0.0640):
+- Best tree (cx=14, rel=0.0762):
   ```
-  (0.316451 + (0.457166 * min(d1, d2)))
+  ((0.239986 + (0.012192 * d1)) + sqrt(min(d2, (-0.864315 + min(d1, d2)))))
   ```
 
 ### I.43.31
 - True: `k*T/(6*pi*eta*r)`
-- Best tree (cx=9, rel=0.9983):
+- Best tree (cx=21, rel=0.2655):
   ```
-  ((0.179579 / tanh((r < 4.9035))) / reduce_mean(k))
+  ((pow(0.160917, r) + neg((-0.02065 * pow(log(k), T)))) + pow(0.162708, ((eta * r) * (eta / T))))
   ```
 
 ## Reading

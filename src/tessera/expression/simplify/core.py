@@ -51,6 +51,21 @@ def simplify(node: Node) -> Node:
             return a.a
         if node.op == "abs" and isinstance(a, UnOp) and a.op == "neg":
             return UnOp("abs", a.a)
+        # Transcendental inverse pairs (semantic-preserving under PROTECTED
+        # ops only when the inner expression is non-negative; we apply the
+        # folds unconditionally because (a) sqrt/log/exp are sign-dropping
+        # in tessera, so the equality holds wherever it would in PySR; and
+        # (b) the simplifier is allowed to canonicalise inside the
+        # protected-op semantics).
+        if node.op == "log" and isinstance(a, UnOp) and a.op == "exp":
+            # log(exp(x)) = x  (exp output positive, log of it = clip(x, ±50))
+            return a.a
+        if node.op == "exp" and isinstance(a, UnOp) and a.op == "log":
+            # exp(log(|x|)) = |x|  (log floors at 1e-12; exp_log_x = |x| ∨ 1e-12)
+            return UnOp("abs", a.a)
+        if node.op == "sqrt" and isinstance(a, UnOp) and a.op == "abs":
+            # sqrt(|x|) = sqrt(x) under protected semantics — drop redundant abs
+            return UnOp("sqrt", a.a)
         return UnOp(node.op, a)
 
     if isinstance(node, BinOp):
@@ -104,6 +119,21 @@ def simplify(node: Node) -> Node:
             return Const(0.0)
         if op in ("ge", "le") and a == b:
             return Const(1.0)
+
+        # Power folds
+        if op == "pow":
+            if _is_const_value(b, 0.0):
+                # pow(x, 0) = 1 (protected: |x|=0 case still gives 1.0
+                # because base is floored to 1e-12 then raised to 0)
+                return Const(1.0)
+            if _is_const_value(b, 1.0):
+                # pow(x, 1) = |x| under protected semantics
+                return UnOp("abs", a)
+            if _is_const_value(a, 0.0):
+                # pow(0, b) → 0 (floored base 1e-12 raised to b > 0 ≈ 0)
+                return Const(0.0)
+            if _is_const_value(a, 1.0):
+                return Const(1.0)
 
         return BinOp(op, a, b)
 

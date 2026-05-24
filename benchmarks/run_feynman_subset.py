@@ -115,11 +115,11 @@ def run_one(name, formula, sampler):
     var_y = float(np.var(y))
 
     cfg = GPConfig(
-        pop_size=120,
-        n_gens=40,
+        pop_size=200,
+        n_gens=80,
         init_max_depth=4,
         parsimony=max(var_y * 0.005, 1e-4),
-        early_stop_patience=15,
+        early_stop_patience=20,
         seed=2026,
         pointwise_only=True,    # Feynman targets are pure pointwise functions
         verbose=False,
@@ -173,8 +173,9 @@ def main():
          "2020). The full benchmark has 100 equations; this subset spans",
          "trivial-product to non-trivial Lorentz boost in ~2 minutes total.",
          "",
-         f"**GP config:** pop=120, gens=40, pointwise_only=True, "
-         f"optimize_constants every 3 gens (Nelder-Mead, 30 iter).",
+         f"**GP config:** pop=200, gens=80, pointwise_only=True, "
+         f"optimize_constants every 3 gens (Nelder-Mead, 30 iter). "
+         f"Alphabet includes protected sqrt/exp/log/pow.",
          f"**Samples per equation:** 2000",
          f"**Total wall-clock:** {time.time() - t_start:.1f}s",
          "",

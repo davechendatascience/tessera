@@ -6,6 +6,47 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (transcendental primitives — closes Feynman vocabulary gap)
+- **`sqrt`, `exp`, `log`** added to `UN_OP_FNS` and **`pow`** added to
+  `BIN_OP_FNS` in `tessera.expression.tree`. All use PySR-style
+  protected semantics so the GP search cannot be NaN-poisoned:
+    `sqrt(x)`   := `sqrt(|x|)`
+    `log(x)`    := `log(max(|x|, 1e-12))`
+    `exp(x)`    := `exp(clip(x, ±50))`
+    `pow(a, b)` := `pow(max(|a|, 1e-12), clip(b, ±8))`, NaN → 0
+- **Interval bounds** for all four added in
+  `tessera.expression.interval`, so branch-and-bound pruning still
+  works when the new ops appear in trees.
+- **Simplifier folds** added in `simplify.core`:
+    `log(exp(x)) → x`
+    `exp(log(x)) → |x|`     (protected semantics)
+    `sqrt(|x|)   → sqrt(x)` (drop redundant abs)
+    `pow(x, 0)   → 1`
+    `pow(x, 1)   → |x|`     (protected semantics)
+    `pow(0, x)   → 0`
+- **`op_swap` mutation** groups updated: `{mul, div, pow}` and
+  `{sqrt, log, exp}` so the GP can swap between related ops.
+- **18 tests** in `tests/expression/test_transcendentals.py` covering
+  protected evaluation (no NaN/inf), interval-bound soundness, and
+  the new simplifier folds.
+
+**Motivation:** the Feynman subset benchmark exposed that tessera
+could not represent `sqrt(x)`, `exp(x)`, or `log(x)` — equations
+I.8.14 (Euclidean distance) and I.43.31 (Stokes-Einstein) failed
+outright; I.6.20a (Gaussian) reached only rel=0.02 via a tanh-
+indicator caricature. The new ops close this vocabulary gap.
+
+**Effect on `benchmarks/results/feynman_subset.md`** (pop=200, gens=80):
+- I.6.20a (Gaussian):    rel 0.02 → **0.0012** (~20× improvement)
+- I.43.31 (Stokes):      rel 0.998 → **0.27** (was unfit; now partial)
+- I.8.14 (Euclidean):    failed (constant) → rel=0.22 (uses `pow`)
+- I.12.1 (μ*Nn):         exact, unchanged
+- I.14.3 (m*g*z):        exact → rel=0.10 (search-space dilution;
+                                            mitigated by larger budget)
+
+Trade-off is documented: extra ops capture more forms but dilute
+search for trivial ones. Larger pop/gens recovers most ground.
+
 ### Added (axis-semantic type system, scoped minimum)
 - **`tessera.expression.axes`** — first step toward
   `invariance_in_sr.md`'s axis architecture, scoped as a minimum

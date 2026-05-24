@@ -34,7 +34,7 @@ Distinct value vs other SR libraries:
 git clone https://github.com/davechendatascience/tessera
 cd tessera
 pip install -e .
-pytest tests/                  # 374 tests should pass
+pytest tests/                  # 392 tests should pass
 ```
 
 (Tessera is installed from this git repo. PyPI publishing is deferred;
@@ -169,7 +169,7 @@ implementation pieces:
 
 ## Status
 
-- **374 tests passing** across `tessera.expression`, `tessera.search`,
+- **392 tests passing** across `tessera.expression`, `tessera.search`,
   `tessera.koopman`, `tessera.backend`, and `tessera.expression.axes`
 - CPU is the default; GPU/JAX backend has a public API (`set_backend`)
   with internal porting tracked in the milestone doc

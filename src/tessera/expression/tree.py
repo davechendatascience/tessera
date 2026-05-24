@@ -49,6 +49,24 @@ from .cache import FunctionalCache
 # ---------------- Pointwise operator tables ----------------
 
 # Binary
+# Protected `pow`: pow(|a|, b) with clipped exponent to keep the GP search
+# numerically safe. PySR uses the same convention (`safe_pow`). The sign of
+# `a` is dropped; if you need signed powers, build them explicitly via
+# sign(a) * pow(|a|, b).
+_POW_EXP_CLIP = 8.0   # |b| capped at 8 to avoid overflow
+_POW_BASE_FLOOR = 1e-12  # |a| floored to avoid 0**negative
+
+
+def _safe_pow(a, b):
+    a_arr = np.asarray(a, dtype=np.float64)
+    b_arr = np.asarray(b, dtype=np.float64)
+    base = np.maximum(np.abs(a_arr), _POW_BASE_FLOOR)
+    exp = np.clip(b_arr, -_POW_EXP_CLIP, _POW_EXP_CLIP)
+    with np.errstate(over="ignore", invalid="ignore"):
+        out = np.power(base, exp)
+    return np.where(np.isfinite(out), out, 0.0)
+
+
 BIN_OP_FNS: dict[str, Callable] = {
     "add":  lambda a, b: a + b,
     "sub":  lambda a, b: a - b,
@@ -63,6 +81,9 @@ BIN_OP_FNS: dict[str, Callable] = {
     "lt":   lambda a, b: (np.asarray(a) < np.asarray(b)).astype(np.float64),
     "ge":   lambda a, b: (np.asarray(a) >= np.asarray(b)).astype(np.float64),
     "le":   lambda a, b: (np.asarray(a) <= np.asarray(b)).astype(np.float64),
+    # Protected power: pow(|a|, clip(b, ±8)). Drops sign of base; use
+    # sign(a)*pow(|a|, b) for signed forms. Matches PySR's safe_pow.
+    "pow":  _safe_pow,
 }
 BIN_OPS = tuple(BIN_OP_FNS.keys())
 
@@ -101,6 +122,24 @@ def _reduce_std(x):
     return float(x[mask].std())
 
 
+# Protected transcendentals. PySR conventions (`safe_sqrt`, `safe_log`,
+# `safe_exp`) — kept identical so trees translate cleanly across tools.
+_EXP_CLIP = 50.0  # exp(50) ≈ 5.18e21, exp(-50) ≈ 1.9e-22 — well inside float64
+_LOG_FLOOR = 1e-12
+
+
+def _safe_sqrt(x):
+    return np.sqrt(np.abs(np.asarray(x, dtype=np.float64)))
+
+
+def _safe_log(x):
+    return np.log(np.maximum(np.abs(np.asarray(x, dtype=np.float64)), _LOG_FLOOR))
+
+
+def _safe_exp(x):
+    return np.exp(np.clip(np.asarray(x, dtype=np.float64), -_EXP_CLIP, _EXP_CLIP))
+
+
 UN_OP_FNS: dict[str, Callable] = {
     "tanh": np.tanh,
     "abs":  np.abs,
@@ -110,6 +149,13 @@ UN_OP_FNS: dict[str, Callable] = {
     # cheaper (no broadcast on the threshold side) and easier for the
     # GP to discover.
     "step": lambda x: (np.asarray(x) > 0.0).astype(np.float64),
+    # Protected transcendentals (PySR convention).
+    # sqrt: sqrt(|x|). Sign-dropping; pair with sign(x) if signed roots needed.
+    # log:  log(max(|x|, 1e-12)). Drops sign; well-defined for any input.
+    # exp:  exp(clip(x, ±50)). Bounded to avoid overflow.
+    "sqrt": _safe_sqrt,
+    "log":  _safe_log,
+    "exp":  _safe_exp,
     # Reductions: array → scalar. Always reduce ALL axes. Used to convert
     # a 2-D feature map into a translation-invariant scalar prediction
     # (see docs/research_notes/invariance_in_sr.md). The GP can place
