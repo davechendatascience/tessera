@@ -207,9 +207,21 @@ On a typical 8-core Windows desktop with `koopman-env-ascii` Python:
 - **GP** (pop=200, gens=50, N=50 000, 10 features): ~30 s (sequential),
   ~25 s (n_workers=4 on Windows)
 
+## Sub-packages
+
+| Sub-package | Purpose |
+|---|---|
+| [`simplify/`](./simplify) | Algebraic canonical-form pass. `simplify` (rule-based folds: X−X, X*0, safe-divide), `simplify_ac` (sort children of comm ops), `simplify_canonical` (compose both). Recommended default for SR scoring. |
+| [`axes/`](./axes) | Axis-semantic type system. Declares the invariance group of each variable dimension (TRANSLATION, CAUSAL_TRANSLATION, PERMUTATION, CYCLIC, ...) and provides a compatibility checker. Lets you declare time-series + image + multi-asset semantics. |
+| `interval.py` | Sound interval arithmetic. Tight closed-form bounds for pointwise + 1-D / 2-D measure-theoretic operators via L1-norm of the kernel. Used by `tessera.search.bounds` for branch-and-bound pruning. |
+| `measure.py`, `measure_2d.py`, `functional.py` | The mathematical primitives: 1-D and 2-D signed measures + LinearFunctional / SeparableBilinear / Volterra2 wrappers. |
+| `tree.py` | Expr Node types + evaluate. |
+| `mutation.py` | random_tree + 9 mutation operators (subtree, crossover, jitter, op-swap, measure-mutate, collapse-functional-chain, ...). |
+| `cache.py` | FunctionalCache for subexpression reuse. |
+
 ## Tests
 
-117 tests across `tests/expression/`. Run with:
+200+ tests across `tests/expression/`. Run with:
 
 ```bash
 pytest tests/expression/
@@ -217,14 +229,19 @@ pytest tests/expression/
 
 ## What's planned
 
-- **2-D measures** for image kernels and PDE discovery (`tensor product`
-  of two 1-D measures, leveraging Fubini for the apply)
+- **Equality saturation** (egg / snake-egg) — see
+  [`docs/research_notes/search_as_energy_min.md`](../../../docs/research_notes/search_as_energy_min.md)
+  for the design
 - **Time-varying kernels** K(s, t) — non-stationary functional analogues
 - **Wavelet density family** as a registered kernel
 - **GP threading with `nogil=True` numba kernels** — bigger speedup
   than process-pool MP on Windows
-- **PySR adapter** — feed the discovered subexpressions as features to
-  PySR for the pointwise composition layer (hybrid hierarchical search)
+- **WeightedIndicatorSum primitive** — closes the gap to EML-style
+  cost-basis primitives (currently expressible only as ~40-node
+  approximations via `tanh(k·diff)`)
+- **Axis enforcement in `random_tree` / `mutate`** — currently
+  `tessera.expression.axes` provides a non-enforcing checker; future
+  work integrates type-level constraints with the search loop
 
 ## See also
 

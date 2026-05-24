@@ -17,8 +17,10 @@ panels, and other structured sensor data.
 - Each submodule has a README + an executable example
 - Standard SR benchmarks (Feynman dataset, SRBench-style problems)
   ship with the library and pass
-- Installation is a one-liner: `pip install tessera` (eventually) or
-  `pip install git+...` (today)
+- Installation is a one-liner: `pip install git+...` from GitHub
+  for now. PyPI publishing deferred until a clear release milestone;
+  `pytessera` (the available distribution name) is reserved when we
+  ship — import name stays `tessera`, same pattern as scikit-learn.
 - A new user can clone the repo, run a benchmark, and understand
   what tessera does within 30 minutes
 
@@ -60,17 +62,41 @@ explainable formulas that preserve invariance for structured sensor
 data, including computer vision.**
 
 This is the most ambitious and most distinct claim. Workable on CPU
-for small problems (MNIST done, 0.82 accuracy). Needs the GPU
-backend + axis enforcement in search for CIFAR-class problems.
+for small problems (MNIST 0-vs-rest = 0.82 acc on 200 samples in 14s).
+Needs the GPU backend + axis enforcement for full-dataset / CIFAR-class
+problems.
 
-**Success metrics:**
-- A working interpretable CV classifier (e.g., MNIST > 0.95 with a
-  discoverable aggregator, CIFAR-10 above some threshold)
+**Concrete target (set 2026-05-25):** tessera reaches **≥ 95% accuracy
+on the full MNIST dataset (10-class, all 60k training samples), with
+the JAX backend on Colab.** This is the visible payoff that bundles
+all three goals together — it demonstrates the workbench (Goal 1)
+scales, the framework (Goal 2) supports CV-grade problems, and the
+invariance machinery (Goal 3) produces an interpretable model that
+beats vanilla SR while approaching CNN performance.
+
+**Success metrics for this target:**
+- 95% test accuracy on full MNIST 10-class, held-out test split
+- Discovered model is interpretable (a tree the user can read)
+- Runs on Colab GPU end-to-end via git install + `jax[cuda12_pip]`
+- Wall-clock < 10 minutes per training run
+
+**Sub-targets along the way:**
 - GPU backend Tier 1+ shipped (per `docs/milestones/gpu_backend.md`)
 - Axis enforcement in `random_tree` / `mutate` so the search
   respects invariance declarations
+- The axes submodule fuses data representation with SR seamlessly —
+  `TypedVar` is the bridge: declare your data's invariance once,
+  and the search respects it automatically
 - Multi-modal sensor benchmark beyond images (e.g., audio,
-  multi-channel time series)
+  multi-channel time series) using the same axes machinery
+
+**Vision for axes (set 2026-05-25):** the axes submodule should
+allow data representation fused with SR seamlessly. A user
+shouldn't have to choose between "flatten my data for SR" and
+"keep its structure for invariance." The axes type system is the
+bridge that makes a single `TypedVar` work for both — declare the
+invariance once, and the rest of the pipeline (search, evaluation,
+GPU dispatch) respects it.
 
 **Subordinate to goals 1 and 2:** this is the visible payoff; the
 workbench and theory are the foundations that make it work.
@@ -93,7 +119,9 @@ If multiple, prefer the lower-numbered goal. If none, defer.
 - Working `from tessera import ...` examples in the top README
 - Feynman dataset benchmark runner
 - Documentation of the canonical use cases
-- PyPI publishing infrastructure (eventually)
+- PyPI publishing DEFERRED. `pytessera` is reserved as the future
+  distribution name (import name stays `tessera`). Not blocking
+  Goal 1 — git install works fine for the workbench claim.
 
 **Goal-2 tasks** (theory):
 - Equivalence-class enumeration at larger scale

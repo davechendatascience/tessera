@@ -19,10 +19,13 @@ simplifier, const-opt polish) so they're directly comparable.
 |---|---|
 | `Candidate` | (tree, train_loss, complexity, fitness, born_gen) frozen dataclass |
 | `pareto_front(candidates)` | Non-dominated set in (cx, loss) space, sorted by cx ascending |
+| `HallOfFame` | Per-complexity best-ever store; protects discoveries from mutation drift |
 | `mse_loss(y_pred, y_true)` | Default loss; NaN-mask aware |
+| `pnl_loss_hard / pnl_loss_smooth` | Trading-flavoured losses (the smooth variant is a Hamiltonian relaxation; both top-level picklable for multiprocess workers) |
 | `_prediction_is_valid(y_pred, y_true, min_valid_frac)` | NaN-fraction precheck called before any user `loss_fn` |
 | `_evaluate_tree(tree, env, y_true, cache, ..., loss_fn, ...)` | The scoring chokepoint used by every algorithm |
 | `optimize_constants(tree, env, y_true, loss_fn, cache, ...)` | scipy-based Const-leaf polish; PySR-style |
+| `mse_lower_bound / pareto_threshold` | Branch-and-bound primitives — combined with `tessera.expression.interval`, allow GP to skip candidates whose loss-lower-bound exceeds the incumbent Pareto front |
 
 ## Quick start
 
@@ -64,10 +67,29 @@ function or `functools.partial`).
 keeps working — those symbols re-export from this submodule. New code
 should import from `tessera.search` directly.
 
+## Branch-and-bound pruning (optional)
+
+Opt-in via `GPConfig(prune_by_lower_bound=True, n_workers=1)` (currently
+MSE + serial path only). When enabled, each candidate is pre-checked
+via interval arithmetic; if its provable loss-lower-bound exceeds the
+Pareto-front loss at its complexity, the full evaluation is skipped.
+
+```python
+cfg = GPConfig(pop_size=120, n_gens=40, prune_by_lower_bound=True)
+gp = GP(cfg)
+front = gp.run(env, y, feature_names)
+print(gp.prune_stats)   # {"n_pruned": ..., "n_evaluated": ...}
+```
+
+L1-norm bounds make this work for measure-theoretic operators
+(LinearFunctional, SeparableBilinear, Volterra2, FunctionalOp2D) —
+see `tessera.expression.interval`. Validated empirically on synthetic
+benchmarks: tightness ratio median 0.47 on smooth targets.
+
 ## Tests
 
 ```bash
-pytest tests/search/        # 17 tests across the 3 searchers + comparison
+pytest tests/search/        # ~50 tests across the 3 searchers + HoF + bounds
 ```
 
 Coverage:
@@ -75,6 +97,9 @@ Coverage:
 - `test_sa.py` — Metropolis acceptance, cooling schedules, finds signal
 - `test_random_search.py` — baseline runs + finds signal
 - `test_compare.py` — all 3 on the same problem; merged Pareto front
+- `test_hall_of_fame.py` — per-cx best-ever store; protection from drift
+- `test_bounds.py` — interval arithmetic + MSE lower bound + Pareto threshold
+- `test_losses_trading.py` — PnL hard/smooth losses (Hamiltonian relaxation)
 
 ## See also
 

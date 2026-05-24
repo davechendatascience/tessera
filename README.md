@@ -6,91 +6,205 @@
 
 > *"Each piece of a mosaic is small and simple. The whole is composed."*
 
-**Tessera** is a Python library of **applied-math primitives for compositional ML**:
-measures, symbolic operators, state-space inference, differentiable feature
-engineering — designed to fit together as building blocks for dynamical-systems
-discovery, time-series modeling, PDE identification, and more.
+**Tessera** is a Python library for **symbolic regression with
+measure-theoretic operators**. It searches for short, interpretable
+mathematical formulas that fit your data — like PySR or Eureqa, but
+with a richer operator vocabulary built around signed measures,
+linear/bilinear functionals, and 2-D fields.
 
-## Design goals
+Distinct value vs other SR libraries:
 
-1. **Compositional.** Every primitive is a small, hashable, immutable object
-   that combines cleanly with others.
-2. **Cacheable.** Subexpressions in any search are computed once and shared.
-3. **Domain-agnostic.** The same `Measure` abstraction handles time-series
-   convolutions, image filters, graph kernels, point-cloud aggregations.
-4. **Honest about edges.** Linear functionals are first-class via measure theory.
-   Nonlinear (Volterra) and time-varying extensions are exposed where useful
-   and clearly marked where they fall outside the measure-theoretic core.
+- **First-class temporal/spatial structure.** Convolutions with
+  arbitrary measures are primitive operators, not synthesised from
+  pointwise compositions. Natural for time series, PDEs, images.
+- **Axis-semantic type system.** Variables declare their dimensions
+  *and* the invariance group acting on each (translation, causal
+  translation, permutation, cyclic, ...). Constrain the search to
+  respect data symmetry.
+- **Branch-and-bound search.** Cheap interval-arithmetic bounds let
+  the search prune provably-suboptimal candidates without evaluating
+  them on the full dataset.
+- **Honest about its scope.** Linear functionals are first-class via
+  measure theory. Nonlinear (Volterra) extensions are exposed and
+  clearly marked. GPU support is a tracked milestone (CPU works today).
+
+## Quickstart
+
+```bash
+git clone https://github.com/davechendatascience/tessera
+cd tessera
+pip install -e .
+pytest tests/                  # 374 tests should pass
+```
+
+(Tessera is installed from this git repo. PyPI publishing is deferred;
+`pytessera` is reserved as the future distribution name when we ship.)
+
+Then run any of the example benchmarks:
+
+```bash
+python benchmarks/run_lorenz63.py                # ODE rediscovery
+python benchmarks/run_heat_equation_discovery.py # 2-D PDE discovery
+python benchmarks/run_mnist_feature_discovery.py # CV (small subset)
+python benchmarks/run_const_opt_demo.py          # how const polish helps
+```
+
+Each writes a result markdown under `benchmarks/results/`.
+
+## Hello-world: symbolic regression in 10 lines
+
+```python
+import numpy as np
+from tessera.search import GP, GPConfig
+
+# Synthetic: y = sin(2*pi*x) + 0.1*noise
+rng = np.random.default_rng(0)
+x = rng.standard_normal(500)
+y = np.sin(2 * np.pi * x) + 0.1 * rng.standard_normal(500)
+
+gp = GP(GPConfig(pop_size=80, n_gens=30, optimize_constants_every=3))
+front = gp.run({"x": x}, y, feature_names=["x"])
+
+best = min(front, key=lambda c: c.train_loss)
+print(f"loss={best.train_loss:.4g}  cx={best.complexity}  tree={best.tree}")
+```
 
 ## Modules
 
 | Module | Status | Purpose |
 |---|---|---|
-| [`tessera.expression`](src/tessera/expression/README.md) | shipping (v0.1) | Symbolic operators + measure-theoretic kernels |
-| [`tessera.search`](src/tessera/search/README.md) | shipping (v0.2) | Search over Expr trees — GP, SimulatedAnnealing, RandomSearch |
-| [`tessera.koopman`](src/tessera/koopman/README.md) | shipping (v0.1.1) | Explicit-latent Koopman with time-delay embedding |
+| [`tessera.expression`](src/tessera/expression/README.md) | shipping | Tree types, measure-theoretic operators, simplification, algebraic identities |
+| [`tessera.search`](src/tessera/search/README.md) | shipping | GP, Simulated Annealing, Random Search, Hall of Fame, branch-and-bound bounds |
+| [`tessera.koopman`](src/tessera/koopman/README.md) | shipping | Closed-form latent Koopman with time-delay embedding |
+| `tessera.expression.simplify` | shipping | Rule-based + AC-normalisation simplifier (canonical-form pass) |
+| `tessera.expression.axes` | shipping | Axis-semantic type system: Translation, CausalTranslation, Permutation, Cyclic, ... |
+| `tessera.expression.interval` | shipping | Sound interval arithmetic for B&B lower bounds (L1 norms on measures) |
+| `tessera.backend` | scaffold | CPU/GPU switchable backend API; full JAX backend tracked in [`docs/milestones/gpu_backend.md`](docs/milestones/gpu_backend.md) |
 | `tessera.ssm` | planned | Kalman / state-space filtering |
 | `tessera.mts` | planned | Multi-timescale analysis |
-| `tessera.diff_eml` | planned | Differentiable feature engineering |
+
+## Examples by modality
+
+### Time series — rediscover a known signal
+
+```python
+import numpy as np
+from tessera.search import GP, GPConfig
+
+# y = ema(x, halflife=24) - x.shift(7)
+rng = np.random.default_rng(0)
+x = rng.standard_normal(2000)
+# (true target computed externally; SR finds a measure-theoretic form)
+```
+
+See `benchmarks/run_lorenz63.py` and `benchmarks/run_diff_eml_fhn.py`
+for full examples on dynamical-systems data.
+
+### 2-D PDE discovery
+
+Discover the heat equation `dT/dt = α·∇²T` from data:
+
+```bash
+python benchmarks/run_heat_equation_discovery.py
+```
+
+Tessera's `FunctionalOp2D` with `Measure2D` represents the Laplacian
+as a discoverable parameter rather than a hand-coded operator.
+
+### Image feature discovery (CV)
+
+`benchmarks/run_mnist_feature_discovery.py`: SR discovers a 2D
+feature kernel for MNIST 0-vs-rest classification. With ~200 training
+samples and 25 GP generations, the search converges on the classical
+horizontal Laplacian `[+1, -2, +1]` (a recognisable edge detector)
+in ~25 seconds and reaches 0.80-0.82 test accuracy. Kernel
+visualisation saved to `benchmarks/results/mnist_discovered_kernel.png`.
+
+## Axis-semantic declarations
+
+For structured sensor data, declare what KIND of axis each dimension
+is. The compatibility checker validates that operators respect the
+declared symmetries:
+
+```python
+from tessera.expression.axes import Axis, Invariance, TypedVar
+
+# Time series: causal translation invariance
+ts = TypedVar("returns", axes=(
+    Axis("time", 10000, Invariance.CAUSAL_TRANSLATION),
+))
+
+# Image: 2-D translation invariance
+img = TypedVar("image", axes=(
+    Axis("height", 28, Invariance.TRANSLATION),
+    Axis("width", 28, Invariance.TRANSLATION),
+))
+
+# Multi-asset basket: time × asset (permutation-invariant)
+basket = TypedVar("prices", axes=(
+    Axis("time", 10000, Invariance.CAUSAL_TRANSLATION),
+    Axis("asset", 8, Invariance.PERMUTATION),
+))
+```
+
+The compatibility checker (`check_compatibility(tree, typed_env)`)
+catches violations like applying a translation-equivariant
+convolution to a permutation axis.
+
+## Theory / research notes
+
+The library is built around a Knuth-grounded formal framework:
+SR-for-fit as a single-agent perfect-information game. The research
+notes below develop the theory and connect it to specific
+implementation pieces:
+
+- [`docs/PROJECT_GOALS.md`](docs/PROJECT_GOALS.md) — what tessera is for
+- [`docs/framework_synthesis.md`](docs/framework_synthesis.md) — every implementation mapped to its framework role
+- [`docs/research_notes/fit_as_perfect_info_game.md`](docs/research_notes/fit_as_perfect_info_game.md) — Knuth-grounded framework
+- [`docs/research_notes/measure_theory_and_perfect_info.md`](docs/research_notes/measure_theory_and_perfect_info.md) — measure algebra layer
+- [`docs/research_notes/search_as_energy_min.md`](docs/research_notes/search_as_energy_min.md) — algebraic equivalence as free budget
+- [`docs/research_notes/invariance_in_sr.md`](docs/research_notes/invariance_in_sr.md) — axis semantics direction
+- [`docs/research_notes/gpu_and_cv_via_sr.md`](docs/research_notes/gpu_and_cv_via_sr.md) — GPU + CV scoping
+- [`docs/milestones/gpu_backend.md`](docs/milestones/gpu_backend.md) — JAX backend port roadmap
+
+## Status
+
+- **374 tests passing** across `tessera.expression`, `tessera.search`,
+  `tessera.koopman`, `tessera.backend`, and `tessera.expression.axes`
+- CPU is the default; GPU/JAX backend has a public API (`set_backend`)
+  with internal porting tracked in the milestone doc
+- Multiple working benchmarks covering time series, ODEs, 2-D PDEs,
+  weather (NCEP), and MNIST image classification
 
 ## Install
 
+Currently installed from this git repo only. (PyPI publishing is
+deferred; the bare `tessera` name is taken, `pytessera` is available
+and reserved for future use.)
+
 ```bash
-pip install -e .             # editable, for development
+# Editable install for development
+git clone https://github.com/davechendatascience/tessera
+cd tessera
+pip install -e .
+
+# Or directly from a consuming project
+pip install "git+https://github.com/davechendatascience/tessera.git"
+```
+
+Optional extras:
+
+```bash
 pip install -e .[dev]        # + pytest, ruff, mypy
 pip install -e .[all]        # + sympy, pysr (optional)
 ```
 
-After this, any consuming project can simply `import tessera`.
+JAX support (for the future GPU backend):
 
-## Usage example (expression module)
-
-```python
-import numpy as np
-from tessera.expression import (
-    measure_ema, measure_diff, measure_signed_sum,
-    SeparableBilinear, Volterra2,
-    FunctionalCache, apply_with_cache,
-)
-
-x = np.random.randn(10_000)
-
-# Pure linear functional via a measure
-y = measure_ema(halflife=24).apply(x)            # exact pandas EMA, O(N)
-
-# Signed atomic measure — arbitrary weighted sum of lags
-m = measure_signed_sum([(0.5, 0), (-0.3, 24), (0.1, 168)])
-y = m.apply(x)
-
-# Bilinear (separable, via Fubini)
-bil = SeparableBilinear(
-    measure_a=measure_diff(1),
-    measure_b=measure_ema(24),
-)
-y_cross = bil.apply(x, x)   # r(t) × ema(x)[t]
-
-# Quadratic Volterra-2: e.g. squared returns
-vol = Volterra2(measure_a=measure_diff(1), measure_b=measure_diff(1))
-realised_var = vol.apply(x)
-
-# Subexpression caching — drop-in for any search loop
-cache = FunctionalCache(mem_size=10_000, disk_dir="cache/feat")
-y = apply_with_cache(bil, cache, var_ids=("x", "x"), xs=(x, x))
+```bash
+pip install jax jaxlib       # CPU JAX
+# pip install jax[cuda12_pip] # GPU JAX
 ```
-
-## Status
-
-- **v0.1.1** — `tessera.koopman` adds `LatentKoopman` (closed-form
-  identification, time-delay embedding, separate E/K/D maps,
-  optional delta-target mode for trending series).
-  See [`src/tessera/koopman/README.md`](src/tessera/koopman/README.md).
-- **v0.1** — `tessera.expression` ships with `Measure`, `Functional`,
-  `FunctionalCache`, Numba-JIT kernels, Expr `tree`, `mutation`
-  operators, and a population-based `GP` search loop.
-  See [`src/tessera/expression/README.md`](src/tessera/expression/README.md).
-- **All tests passing**: 156/156 (143 expression + 13 koopman).
-- Next: port the ssm / mts / diff_eml modules under the same
-  packaging.
 
 ## License
 
