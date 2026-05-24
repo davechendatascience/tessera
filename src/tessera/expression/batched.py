@@ -249,6 +249,146 @@ def evaluate_population(
     return results
 
 
+def evaluate_population_stacked(
+    trees: Sequence[Node],
+    env: dict,
+    var_names: Sequence[str] | None = None,
+):
+    """Same as evaluate_population, but returns a single [K, N] tensor in
+    input order. One block_until_ready instead of K.
+
+    This is the **correct API for the GP loop**: downstream code wants
+    per-candidate losses, which compute naturally as
+        loss[k] = mean(axis=-1)((y_pred[k] - y_true)**2)
+    over a [K, N] tensor — one JAX op, one kernel, one sync.
+
+    The per-tree-list API of `evaluate_population` is ergonomic but
+    forces K separate Python-level slices + K block_until_ready calls,
+    which adds ~100 ms of fixed Python overhead at K=200. Avoid it in
+    hot paths.
+
+    Returns
+    -------
+    jax_array of shape [K, N], rows in the original tree-input order.
+    """
+    import jax.numpy as jnp
+    import numpy as np
+
+    if var_names is None:
+        var_names = sorted(env.keys())
+    var_names = tuple(var_names)
+    args = tuple(env[v] for v in var_names)
+    K = len(trees)
+
+    # Group trees by topology; remember each row's destination index
+    groups: dict[str, list[tuple[int, Node]]] = defaultdict(list)
+    for i, tree in enumerate(trees):
+        if not is_pure_pointwise(tree):
+            raise ValueError(
+                f"evaluate_population_stacked: tree at index {i} has "
+                "FunctionalOp; Tier 3 only supports pure-pointwise trees."
+            )
+        groups[topology_key(tree)].append((i, tree))
+
+    # Build the inverse permutation (orig_idx -> concat-order position)
+    concat_to_orig: list[int] = []
+    for items in groups.values():
+        concat_to_orig.extend(i for i, _ in items)
+    inverse = np.zeros(K, dtype=np.int32)
+    for concat_pos, orig_i in enumerate(concat_to_orig):
+        inverse[orig_i] = concat_pos
+    inverse_jax = jnp.asarray(inverse)
+
+    # Evaluate each topology, collect [K_t, N] blocks
+    blocks = []
+    for items in groups.values():
+        template = items[0][1]
+        K_t = len(items)
+        M = n_constants(template)
+        if M == 0:
+            consts_batch = jnp.zeros((K_t, 0))
+        else:
+            consts_batch = jnp.asarray([extract_constants(t) for _, t in items])
+        fn = compile_topology(template, var_names)
+        blocks.append(fn(args, consts_batch))   # [K_t, N]
+
+    concat = jnp.concatenate(blocks, axis=0)    # [K, N] in concat order
+    return concat[inverse_jax]                  # [K, N] in input order
+
+
+class PopulationEvaluator:
+    """Pre-compiled evaluator for a fixed population.
+
+    Use this when you'll evaluate the same population on multiple `env`s
+    (e.g., across const-opt iterations, walk-forward windows, or
+    repeated benchmark timings). It does the topology grouping +
+    constants packing + jit compilation ONCE in __init__; each __call__
+    just dispatches the precomputed jitted functions on the new env.
+
+    Usage:
+        pe = PopulationEvaluator(trees, var_names=["x"])
+        y_stack = pe(env_jax)          # [K, N] tensor in tree-input order
+
+    Lifecycle: a `PopulationEvaluator` is invalidated as soon as any
+    tree in the population is mutated (a new tree with a different
+    topology would not be in the cache). The GP loop should rebuild it
+    once per generation, or you can use `evaluate_population_stacked`
+    which rebuilds the cache every call (cheap thanks to
+    `_TOPO_CACHE`).
+    """
+
+    def __init__(self, trees: Sequence[Node], var_names: Sequence[str]):
+        import jax.numpy as jnp
+        import numpy as np
+
+        var_names = tuple(var_names)
+        self.var_names = var_names
+        self.K = len(trees)
+
+        # Group by topology
+        groups: dict[str, list[tuple[int, Node]]] = defaultdict(list)
+        for i, tree in enumerate(trees):
+            if not is_pure_pointwise(tree):
+                raise ValueError(
+                    f"PopulationEvaluator: tree {i} has FunctionalOp; "
+                    "Tier 3 only supports pure-pointwise trees."
+                )
+            groups[topology_key(tree)].append((i, tree))
+
+        # Inverse permutation once
+        concat_to_orig: list[int] = []
+        for items in groups.values():
+            concat_to_orig.extend(i for i, _ in items)
+        inverse = np.zeros(self.K, dtype=np.int32)
+        for concat_pos, orig_i in enumerate(concat_to_orig):
+            inverse[orig_i] = concat_pos
+        self._inverse = jnp.asarray(inverse)
+
+        # Pre-allocate per-topology (consts_batch, compiled_fn)
+        self._groups: list[tuple[object, Callable]] = []
+        for items in groups.values():
+            template = items[0][1]
+            K_t = len(items)
+            M = n_constants(template)
+            if M == 0:
+                consts_batch = jnp.zeros((K_t, 0))
+            else:
+                consts_batch = jnp.asarray(
+                    [extract_constants(t) for _, t in items]
+                )
+            fn = compile_topology(template, var_names)
+            self._groups.append((consts_batch, fn))
+
+    def __call__(self, env: dict):
+        """Evaluate the population on env. Returns [K, N] tensor in
+        input order."""
+        import jax.numpy as jnp
+        args = tuple(env[v] for v in self.var_names)
+        blocks = [fn(args, consts) for consts, fn in self._groups]
+        concat = jnp.concatenate(blocks, axis=0)
+        return concat[self._inverse]
+
+
 def clear_topo_cache() -> None:
     """Drop all compiled topology entries."""
     _TOPO_CACHE.clear()
@@ -260,6 +400,7 @@ def topo_cache_size() -> int:
 
 __all__ = [
     "topology_key", "extract_constants", "n_constants",
-    "compile_topology", "evaluate_population",
+    "compile_topology", "evaluate_population", "evaluate_population_stacked",
+    "PopulationEvaluator",
     "clear_topo_cache", "topo_cache_size",
 ]

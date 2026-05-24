@@ -23,7 +23,8 @@ from tessera.expression.measure import measure_diff
 from tessera.expression.jit import evaluate_jit, clear_jit_cache
 from tessera.expression.batched import (
     topology_key, extract_constants, n_constants,
-    compile_topology, evaluate_population,
+    compile_topology, evaluate_population, evaluate_population_stacked,
+    PopulationEvaluator,
     clear_topo_cache, topo_cache_size,
 )
 
@@ -210,6 +211,78 @@ def test_evaluate_population_rejects_functional():
     x = jnp.asarray(np.arange(10, dtype=np.float32))
     with pytest.raises(ValueError, match="has FunctionalOp"):
         evaluate_population(trees, {"x": x})
+
+
+# ---------------- evaluate_population_stacked (fast variant) ----------------
+
+def test_evaluate_population_stacked_returns_kn_tensor():
+    """Stacked variant returns a single [K, N] tensor in input order."""
+    trees = [
+        BinOp("add", Var("x"), Const(1.0)),
+        BinOp("mul", Var("x"), Const(2.0)),
+        BinOp("add", Var("x"), Const(3.0)),
+    ]
+    n = 50
+    x = jnp.asarray(np.arange(n, dtype=np.float32))
+    out = evaluate_population_stacked(trees, {"x": x})
+    assert out.shape == (3, n), out.shape
+
+    # Compare to per-tree evaluate_jit
+    expected = jnp.stack([evaluate_jit(t, {"x": x}) for t in trees])
+    np.testing.assert_allclose(np.asarray(out), np.asarray(expected), rtol=1e-4)
+
+
+def test_evaluate_population_stacked_preserves_input_order():
+    """Same trees in different order produce reordered rows (no
+    grouping-induced shuffling visible to the caller)."""
+    t_a = BinOp("add", Var("x"), Const(1.0))
+    t_b = BinOp("mul", Var("x"), Const(2.0))
+    t_c = BinOp("add", Var("x"), Const(3.0))
+    x = jnp.asarray(np.arange(10, dtype=np.float32))
+
+    out1 = evaluate_population_stacked([t_a, t_b, t_c], {"x": x})
+    out2 = evaluate_population_stacked([t_b, t_a, t_c], {"x": x})
+
+    # Row 0 of out1 = row 1 of out2 (both are t_a)
+    np.testing.assert_allclose(np.asarray(out1[0]), np.asarray(out2[1]), rtol=1e-5)
+    # Row 0 of out2 = row 1 of out1 (both are t_b)
+    np.testing.assert_allclose(np.asarray(out1[1]), np.asarray(out2[0]), rtol=1e-5)
+
+
+# ---------------- PopulationEvaluator ----------------
+
+def test_population_evaluator_output_matches_stacked():
+    trees = [
+        BinOp("add", Var("x"), Const(1.0)),
+        BinOp("mul", Var("x"), Const(2.0)),
+        UnOp("tanh", Var("x")),
+        BinOp("add", Var("x"), Const(3.0)),
+    ]
+    n = 20
+    x = jnp.asarray(np.arange(n, dtype=np.float32))
+    pe = PopulationEvaluator(trees, var_names=("x",))
+    out = pe({"x": x})
+    assert out.shape == (4, n)
+
+    expected = evaluate_population_stacked(trees, {"x": x})
+    np.testing.assert_allclose(np.asarray(out), np.asarray(expected), rtol=1e-5)
+
+
+def test_population_evaluator_reusable_across_envs():
+    trees = [
+        BinOp("add", Var("x"), Const(1.0)),
+        BinOp("mul", Var("x"), Const(2.0)),
+    ]
+    pe = PopulationEvaluator(trees, var_names=("x",))
+
+    # Call on three different envs
+    for seed in [0, 1, 2]:
+        rng = np.random.default_rng(seed)
+        x = jnp.asarray(rng.standard_normal(30).astype(np.float32))
+        out = pe({"x": x})
+        expected = evaluate_population_stacked(trees, {"x": x})
+        np.testing.assert_allclose(np.asarray(out), np.asarray(expected),
+                                   rtol=1e-4)
 
 
 # ---------------- Speedup smoke test ----------------

@@ -67,7 +67,8 @@ from .jit import (
 )
 from .batched import (
     topology_key, extract_constants, n_constants,
-    compile_topology, evaluate_population,
+    compile_topology, evaluate_population, evaluate_population_stacked,
+    PopulationEvaluator,
     clear_topo_cache, topo_cache_size,
 )
 
@@ -91,7 +92,8 @@ __all__ = [
     "clear_jit_cache", "jit_cache_size",
     # batched (Tier 3)
     "topology_key", "extract_constants", "n_constants",
-    "compile_topology", "evaluate_population",
+    "compile_topology", "evaluate_population", "evaluate_population_stacked",
+    "PopulationEvaluator",
     "clear_topo_cache", "topo_cache_size",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
