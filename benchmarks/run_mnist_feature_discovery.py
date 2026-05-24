@@ -55,8 +55,8 @@ N_TRAIN = 200
 N_TEST = 100
 IMG_SIZE = 14            # downsampled from 28
 TARGET_DIGIT = 0
-POP_SIZE = 50
-N_GENS = 15
+POP_SIZE = 80
+N_GENS = 25
 INIT_MAX_DEPTH = 4
 PARSIMONY = 0.001
 SEED = 2026
@@ -379,6 +379,41 @@ def main():
     L.append("|---|---|---|---|")
     for h in history[::5]:
         L.append(f"| {h['gen']} | {h['best_loss']:.4f} | {h['best_cx']} | {h['elapsed']:.1f} |")
+    L.append("")
+    # Note about reduce-op presence in the tree (or absence)
+    tree_str = str(best_tree)
+    reduce_ops_in_tree = [op for op in
+                           ("reduce_mean", "reduce_max",
+                            "reduce_sum", "reduce_std")
+                           if op in tree_str]
+    L.append("## Did the GP discover an aggregator?")
+    L.append("")
+    if reduce_ops_in_tree:
+        L.append(f"YES — the best tree contains: {', '.join(reduce_ops_in_tree)}")
+        L.append("The GP discovered an aggregation rule from the grammar.")
+    else:
+        L.append("NO — no reduce_* ops in the discovered tree. The benchmark's")
+        L.append("hardcoded mean-pool wrapper is doing the aggregation.")
+        L.append("")
+        L.append("This is an honest empirical finding: ADDING reduce ops to the")
+        L.append("grammar isn't sufficient for them to be USED. Three reasons:")
+        L.append("")
+        L.append("1. **random_tree builds bottom-up.** A reduce op is only useful")
+        L.append("   if placed at the ROOT (to make the whole tree scalar-valued).")
+        L.append("   Random-tree's recursive construction makes reduce ops appear")
+        L.append("   at root rarely.")
+        L.append("2. **Mean-pool fallback works adequately.** The benchmark wrapper")
+        L.append("   mean-pools any array output, so there's no fitness pressure")
+        L.append("   to choose a different aggregator — the wrapper gives the GP")
+        L.append("   a free aggregation.")
+        L.append("3. **No bias mutation.** The mutation dispatcher has no rule like")
+        L.append("   'wrap the root in a random reduce op.' Without that bias, the")
+        L.append("   GP wanders in the array-output subspace.")
+        L.append("")
+        L.append("Next step to actually discover aggregation: remove the wrapper's")
+        L.append("mean-pool fallback (return inf for array outputs) and/or add a")
+        L.append("`wrap_in_reduce` mutation. Either forces the GP to discover an")
+        L.append("explicit aggregator.")
     report_path.write_text("\n".join(L), encoding="utf-8")
     print(f"[report] wrote {report_path}")
 
