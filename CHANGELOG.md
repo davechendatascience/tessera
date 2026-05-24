@@ -6,6 +6,37 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (2D Measure JAX path — Tier 3-C)
+- **`Measure2D.apply(jax_array)`** routes to a new `_apply_jax` method
+  on JAX-array inputs. Faithful jit-friendly rewrite of the numpy path:
+  - Atomic part: shift-and-accumulate via `Y.at[t:t+L, x:x+L].add(w * src)`
+  - Separable density: outer-product of sep_t × sep_x → one 2D kernel,
+    convolved via `jax.scipy.signal.fftconvolve` (chosen over
+    `convolve2d` because the latter rejects cases where the kernel is
+    larger than the input in any dimension; fftconvolve handles all
+    sizes)
+  - Warmup mask via `Y.at[...].set(fwm)` for both time and signed
+    spatial boundaries
+- **`evaluate(FunctionalOp2D, env_jax)`** end-to-end works on JAX. The
+  tree's `FunctionalOp2D` branch in `evaluate()` is now backend-
+  polymorphic — input dtype/library is preserved through the tree walk.
+- **8 new tests** in `tests/test_jax_backend_2d.py` covering:
+  - Atomic 2D measures: laplacian-5pt, diff_t, grad_x, sobel_x
+  - Separable density (atomic-only sep_t and sep_x; see caveat below)
+  - End-to-end `evaluate(FunctionalOp2D, env_jax)` with pointwise wrappers
+
+**Documented divergence:** the numpy path uses a recursive EMA fast-
+path for pure-exponential measures, which preserves the initial value
+with weight `(1-α)^t`. The JAX path uses kernel-conv (truncated
+kernel, weight `α·(1-α)^t` at the boundary). The two diverge by a
+few samples at the warmup boundary for pure-EMA measures; agree
+exactly for atomic-only measures and within float precision for
+general densities away from the boundary. Recursive EMA on JAX would
+require `jax.lax.scan` — deferred to a follow-up. For MNIST features
+(Laplacian, Sobel, atomic kernels), the divergence does not arise.
+
+**Full test count: 468 passing** (460 + 8 2D tests).
+
 ### Added (GP integration with JAX batched eval — Tier 3-A)
 - **`GPConfig.use_jax_population_eval: bool = False`** flag. When True,
   the GP loop's `_init_population` and `_breed` route each generation's

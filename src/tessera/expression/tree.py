@@ -605,14 +605,17 @@ def evaluate(
     if isinstance(node, FunctionalOp2D):
         # The argument must evaluate to a 2-D array (T, X). The Measure2D
         # apply runs the atomic shift-and-accumulate + the separable
-        # density along each axis.
+        # density along each axis. Backend-polymorphic: numpy stays
+        # numpy, JAX stays JAX.
         val = evaluate(node.arg, env, cache, fill_warmup=fill_warmup)
-        arr = np.asarray(val, dtype=np.float64)
+        xp = array_module(val)
+        arr = xp.asarray(val) if xp is not np else np.asarray(val, dtype=np.float64)
         if arr.ndim == 0:
             # Scalar broadcast — get the env shape from any 2-D Var
             for v in env.values():
-                if np.ndim(v) == 2:
-                    arr = np.full(v.shape, float(arr), dtype=np.float64)
+                if hasattr(v, "ndim") and v.ndim == 2:
+                    arr = xp.full(v.shape, float(arr),
+                                  dtype=(np.float64 if xp is np else None))
                     break
             else:
                 raise ValueError(

@@ -147,18 +147,31 @@ class Measure2D:
 
     # ---- Apply ----
 
-    def apply(self, U: np.ndarray, fill_warmup: float | None = np.nan) -> np.ndarray:
+    def apply(self, U, fill_warmup: float | None = np.nan):
         """Apply the 2D measure to a (T, X) field.
 
         (K·U)(t, x) = atomic part + separable density part
                     = Σᵢ wᵢ U(t − tᵢ, x − xᵢ)
                       + (κ_t along time of (κ_x along space of U))(t, x)
 
+        Input dispatch
+        --------------
+        If `U` is a JAX array (detected by type), routes to `_apply_jax`,
+        which is a faithful jit-friendly rewrite of the numpy path using
+        `jax.numpy` + `Y.at[...].add(...)` for the atomic shift-and-
+        accumulate and `jax.scipy.signal.convolve2d` for the separable
+        density. Output is a JAX array on the same device.
+
         Returns
         -------
-        np.ndarray of shape (T, X). Time-warmup rows (t < max_lag_t) and
-        space-boundary columns are filled with `fill_warmup`.
+        np.ndarray (or jax.Array) of shape (T, X). Time-warmup rows
+        (t < max_lag_t) and space-boundary columns are filled with
+        `fill_warmup`.
         """
+        # JAX-array fast path
+        if type(U).__module__.startswith("jax"):
+            return self._apply_jax(U, fill_warmup)
+
         U = np.asarray(U, dtype=np.float64)
         if U.ndim != 2:
             raise ValueError(f"Measure2D requires a 2D input, got shape {U.shape}")
@@ -220,6 +233,91 @@ class Measure2D:
         if warmup_x_right > 0:
             Y[:, X - warmup_x_right:] = fwm
 
+        return Y
+
+    def _apply_jax(self, U, fill_warmup):
+        """JAX-native rewrite of Measure2D.apply.
+
+        Mirrors the numpy logic structurally: atomic shift-and-accumulate
+        via `Y.at[...].add(...)`, separable density via
+        `jax.scipy.signal.convolve2d` with the materialised outer-product
+        kernel, then warmup mask via `Y.at[...].set(fwm)`.
+
+        Output dtype follows U's dtype (typically float32 under JAX).
+        """
+        import jax.numpy as jnp
+
+        if U.ndim != 2:
+            raise ValueError(
+                f"Measure2D requires a 2D input, got shape {U.shape}"
+            )
+        T, X = U.shape
+        Y = jnp.zeros((T, X), dtype=U.dtype)
+
+        # Atomic part: shift-and-accumulate via functional .at[] updates
+        for a in self.atoms:
+            if a.weight == 0.0:
+                continue
+            t_src_start = max(0, a.lag_t)
+            t_dst_start = max(0, a.lag_t)
+            x_src_start = max(0, -a.lag_x)
+            x_dst_start = max(0, a.lag_x)
+            x_len = X - abs(a.lag_x)
+            if x_len <= 0:
+                continue
+            t_len = T - a.lag_t
+            if t_len <= 0:
+                continue
+            # t_src_start - a.lag_t = max(0, lag_t) - lag_t; for lag_t >= 0
+            # (causal in time) this is 0
+            src = U[t_src_start - a.lag_t: t_src_start - a.lag_t + t_len,
+                    x_src_start: x_src_start + x_len]
+            Y = Y.at[t_dst_start: t_dst_start + t_len,
+                     x_dst_start: x_dst_start + x_len].add(a.weight * src)
+
+        # Separable density part: causal conv in time x causal conv in space.
+        # Materialise the 1D kernels as JAX arrays, take outer product, run
+        # one convolve2d. Crop the "causal" corner (top-left starting at
+        # K_t-1, K_x-1) so output has shape (T, X) matching the input.
+        if self.has_density:
+            # Use fftconvolve (not convolve2d) because JAX's convolve2d
+            # rejects cases where the kernel is larger than the input in
+            # any dimension; that can legitimately happen for separable
+            # measures with long-tail densities (e.g., EMA support_max=100
+            # applied to a small field). fftconvolve handles all sizes.
+            from jax.scipy.signal import fftconvolve
+
+            sep_t_kernel = jnp.asarray(self.sep_t.to_kernel(), dtype=U.dtype)
+            sep_x_kernel = jnp.asarray(self.sep_x.to_kernel(), dtype=U.dtype)
+            density_kernel = jnp.outer(sep_t_kernel, sep_x_kernel)
+            full = fftconvolve(U, density_kernel, mode="full")
+            # Causal in both axes: y[i, j] = Σ K[s, t] U[i-s, j-t] for
+            # s ∈ [0, T_k-1], t ∈ [0, X_k-1] is the first [T, X] window
+            # of the mode='full' output (matches 1D convention:
+            # np.convolve(x, k, mode='full')[:N] is the causal output).
+            sep_t_part = full[:T, :X]
+            Y = Y + sep_t_part
+
+        # Warmup mask. fill_warmup may be Python float (incl. NaN); pick a
+        # concrete fill value.
+        warmup_t = self.max_lag_t()
+        warmup_x_left = max((a.lag_x for a in self.atoms), default=0)
+        warmup_x_right = max((-a.lag_x for a in self.atoms), default=0)
+        if self.has_density:
+            warmup_x_left = max(warmup_x_left, self.sep_x.support_max)
+
+        if fill_warmup is None or (isinstance(fill_warmup, float)
+                                   and math.isnan(fill_warmup)):
+            fwm = jnp.nan
+        else:
+            fwm = float(fill_warmup)
+
+        if warmup_t > 0:
+            Y = Y.at[:warmup_t, :].set(fwm)
+        if warmup_x_left > 0:
+            Y = Y.at[:, :warmup_x_left].set(fwm)
+        if warmup_x_right > 0:
+            Y = Y.at[:, X - warmup_x_right:].set(fwm)
         return Y
 
     # ---- Pretty-print ----
