@@ -41,6 +41,7 @@ Inside any individual doc, items are flagged with:
 | Explore SR for inverse kinematics with simulation as ground truth | [`research/sr_for_inverse_kinematics.md`](research/sr_for_inverse_kinematics.md) |
 | Think about network-SR architecture + deterministic budget allocation | [`research/network_sr_and_budget_allocation.md`](research/network_sr_and_budget_allocation.md) |
 | Engage with Bowery's MDL/AIT critique of MSE-based SR selection | [`research/algorithmic_information_for_sr.md`](research/algorithmic_information_for_sr.md) |
+| Estimate per-benchmark difficulty + the climb-then-simplify path problem | [`research/benchmark_difficulty_and_climb_then_simplify.md`](research/benchmark_difficulty_and_climb_then_simplify.md) |
 
 ## Organisational principles
 

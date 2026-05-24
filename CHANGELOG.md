@@ -6,6 +6,74 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: benchmark difficulty + climb-then-simplify path problem)
+
+New `docs/research/benchmark_difficulty_and_climb_then_simplify.md`
+(7 sections). Provenance: user's three connected observations
+post-IK-Tier-D-rerun:
+
+1. *"We can construct a raw difficulty score for each benchmark.
+   Rough guess is how many operations we need to get to it."*
+2. *"If we have to get to cx=30 and then simplify to get to a
+   cx=5 solution for IK, this will be hard."*
+3. *"The game-theoretic approach is what if we can search multiple
+   steps ahead and know the evaluations?"*
+
+**§1 Raw difficulty score** — D_min (min cx for exact target in
+vocab), D_random (expected cx under uniform random sampling),
+D_gap (search-space dilution). Rough estimates table for our
+benchmarks: D_min is usually 3-12 nodes; D_random is huge for IK
+specifically because of the multi-op composition probability.
+
+**§2 The climb-then-simplify path problem** — the GP under
+monotone parsimony cannot reach a cx=5 optimum if the mutation
+path requires intermediate cx=15-30 forms. The optimum is "behind
+a complexity ridge." Three known responses listed:
+  (a) non-monotone parsimony schedule (climb early, anneal)
+  (b) multi-modal Pareto (multiple fronts at different cx ranges)
+  (c) free-move budget (aggressive pre-simplify before each eval)
+
+(c) is tessera-native — uses existing simplify_canonical machinery.
+
+**§3 Game-theoretic lookahead** — when can we know an eval without
+computing it? Three cases:
+  - Interval arithmetic gives loss lower bound (cheap, already shipped)
+  - jax.grad gives gradient over constants (already shipped)
+  - Structural lookahead over mutation chains is the open problem
+    The "math" the user pointed to is the algebraic structure of
+    the loss landscape; admits exploitation for problem classes
+    where the structure is known (polynomial fitting, AI Feynman
+    separability, etc.)
+
+**§4 Three threads connect:**
+
+```
+Difficulty score (§1)   ─┐
+                          ├──→  Adaptive search strategy
+Climb-then-simplify (§2) ─┤
+                          │
+Lookahead (§3)           ─┘
+```
+
+**§5 Five open questions** for further empirical work:
+  Q1: Compute D_min for our benchmarks empirically (half day)
+  Q2: Non-monotone parsimony schedule on IK (half day)
+  Q3: Free-move budget — aggressive simplify before scoring (cheap)
+  Q4: Tighter loss lower-bound oracle than interval arithmetic
+  Q5: Algebraic structure exploitation for lookahead per problem class
+
+**§6 Honest non-proposal:** the user noted *"I'm running out of
+new ideas to do the optimization part with a mind of perfect
+information game related concepts."* Further theoretical work has
+diminishing returns. This doc captures the threads but proposes
+no specific implementation work — leaves the empirical-vs-
+theoretical decision to the user.
+
+**§7 Connection to existing notes:** §11.2 of perfect-info-game
+(eval-vs-rewrite two-budget) is the same framing as this §2's
+free-move budget; §6 of high_dim_sr (unit architecture) finds a
+new motivation via difficulty-adaptive strategy selection.
+
 ### Added (research note: AIT / MDL critique of MSE-based SR selection)
 
 New `docs/research/algorithmic_information_for_sr.md` (10 sections).
