@@ -44,6 +44,7 @@ Inside any individual doc, items are flagged with:
 | Estimate per-benchmark difficulty + the climb-then-simplify path problem | [`research/benchmark_difficulty_and_climb_then_simplify.md`](research/benchmark_difficulty_and_climb_then_simplify.md) |
 | Compute analytical Δloss for symbolic mutations (Knuth + FMM + boosting connections) | [`research/analytical_delta_loss.md`](research/analytical_delta_loss.md) |
 | Read the rationale for the Dancing Links side track + implementation-budget tracking | [`research/dancing_links_for_sr.md`](research/dancing_links_for_sr.md) |
+| Map applied-math sample-complexity theorems (Boullé-Townsend, SINDy, RandNLA) to tessera sub-problems | [`research/randomized_recovery_bounds_for_sr.md`](research/randomized_recovery_bounds_for_sr.md) |
 
 ## Organisational principles
 

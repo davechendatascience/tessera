@@ -6,6 +6,85 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: randomized recovery bounds for SR)
+
+User direction (2026-05-25), after watching a video on what's
+solvable/not in operator learning: *"draft the research note."*
+
+New `docs/research/randomized_recovery_bounds_for_sr.md` (11 sections).
+The core observation: modern applied math has mature probabilistic
+sample-complexity theory for linear and smooth operator settings
+(Boullé-Townsend Green's function recovery, SINDy convergence,
+randomized NLA, sparse polynomial recovery). Symbolic regression has
+resisted similar treatment because the search is combinatorial. But
+where SR sub-problems reduce to convex / low-rank / sparse-linear
+shapes, the bounds transfer for free.
+
+THE PARTITION (§1, §3)
+
+Solvable with tight rates AND theorems apply:
+  - Heat equation discovery        (Boullé-Townsend parabolic)
+  - PDE rediscovery generally       (Boullé-Townsend family)
+  - Linear-in-parameters hybrid GP  (SINDy convergence)
+  - Polynomial-basis sufficient stats (sparse polynomial recovery)
+
+Solvable but no published bound:
+  - General tree SR (Feynman, IK, MNIST features)
+  - Symbolic operator discovery with hidden state
+
+Provably hard:
+  - Arbitrary Kolmogorov-complex targets in unrestricted vocabularies
+
+THE VOCABULARY-RESTRICTION RE-FRAMING (§4)
+
+The conventional Boullé-Townsend framing assumes the target lives in
+an unrestricted smooth function space. The tessera-shaped re-framing:
+committing to a finite vocabulary V is a strong prior that should
+give BETTER sample complexity when target ∈ V (smaller hypothesis
+class). Not currently in any paper; flagged as a future research
+direction.
+
+FALSIFICATION (§6)
+
+Concrete experiment: extend `run_heat_equation_discovery.py` with a
+sample-count sweep (N = 100 → 30k); plot success-rate-vs-N curve;
+overlay Boullé-Townsend's predicted N(ε, δ). Three possible verdicts:
+
+  - Match within constant factor → theorem-tessera bridge validated
+  - Tessera uses FEWER samples → vocab-restriction advantage is real
+  - Tessera uses MORE samples → search overhead dominates query cost
+
+~1 day to implement + few hours to run. The verdict itself is the
+deliverable.
+
+WHAT THE NOTE EXPLICITLY DOES NOT CLAIM (§11)
+
+- That bounds exist for general structural SR (they don't)
+- That tessera's empirical methods are sub-optimal (we don't know)
+- That these theorems make SR sample-efficient broadly (apply only
+  to specific sub-problems)
+- That vocabulary-restriction advantage (§4) is theoretically
+  established (a re-framing that would need a new theorem)
+- That this note is faithful to the exact constants and conditions
+  of the cited theorems (catalogue of shapes, not faithful
+  reproduction of bounds)
+
+CONCRETE NEXT EXPERIMENTS (§10)
+
+  Heat equation sample-complexity calibration   1 day    high-yield
+  SINDy convergence cite in §4.4 ship docs      0.5 day  ship-time
+  Sample-complexity-aware budget allocator      2-3 days
+  Vocabulary-restriction theorem formalization  1-2 wks  research
+
+Defer the latter three until the first produces a verdict.
+
+LIFECYCLE STATE
+
+  research/  : 15 notes (+ this one)
+  planned/   : §1.1, §1.2, §2.1, §2.2 still open; §2.3 in partial-pass
+  shipped/   : 3 design docs
+  Task #87 closed
+
 ### Added (§2.3 Phase 4: hand-rolled polynomial canonicaliser, no sympy)
 
 Follow-on to §2.3 Phase 3 partial-pass. User direction: "do the 150 LOC
