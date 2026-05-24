@@ -40,6 +40,7 @@ Inside any individual doc, items are flagged with:
 | Diagnose Feynman failures + plan score-improvement on existing benchmarks | [`research/benchmark_score_improvement.md`](research/benchmark_score_improvement.md) |
 | Explore SR for inverse kinematics with simulation as ground truth | [`research/sr_for_inverse_kinematics.md`](research/sr_for_inverse_kinematics.md) |
 | Think about network-SR architecture + deterministic budget allocation | [`research/network_sr_and_budget_allocation.md`](research/network_sr_and_budget_allocation.md) |
+| Engage with Bowery's MDL/AIT critique of MSE-based SR selection | [`research/algorithmic_information_for_sr.md`](research/algorithmic_information_for_sr.md) |
 
 ## Organisational principles
 

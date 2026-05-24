@@ -6,6 +6,84 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: AIT / MDL critique of MSE-based SR selection)
+
+New `docs/research/algorithmic_information_for_sr.md` (10 sections).
+
+Provenance: user shared a passage from "Mean Mr. Jim" (James Bowery)
+arguing that the SR community conflates *mutation bias* with
+*selection bias*; that mutation bias is free, but the *fitness*
+function must be a real algorithmic-information-theory (AIT) /
+minimum-description-length (MDL) count, not a summary statistic
+like MSE.
+
+**Critique audit (§2): where tessera stands**
+
+| AIT term | Tessera | Honest read |
+|---|---|---|
+| bits(interpreter) | NONE — not counted | Bowery's homework not done |
+| bits(tree \| interpreter) | parsimony × cx (hand-tuned) | Heuristic, not derived |
+| bits(residuals \| tree) | mse_loss | **Exactly what Bowery rejects** |
+
+Tessera's fitness has the same SHAPE as MDL (model term + fit term)
+but lacks AIT grounding. Same problem as PySR, Operon, DSR — the
+critique applies to the SR community as a whole.
+
+**Where MSE-as-MDL is tight vs loose (§3):**
+- Feynman (deterministic targets): MSE ≈ MDL (residuals ≈ 0; no
+  structure to flatten). Bowery doesn't bite here.
+- MNIST 10-class via K=10 SR features: residuals are
+  class-correlated (4/9, 3/8 confusions). **MSE flattens this; MDL
+  would penalise it.** Bowery bites.
+- 3-DoF planar IK after partial-fit: residuals shaped by missing
+  atan2 quadrants. **MSE blind to the structure; MDL sees the
+  missing-model directly.** Bowery bites.
+- Trading PnL: non-Gaussian, regime-dependent. MSE wrong by design
+  (we already use `pnl_loss_*` instead). Bowery's critique
+  pre-validates that move.
+
+The tessera benchmarks where we struggle most (MNIST 71% ceiling;
+IK Tier D) are exactly where MSE-as-fitness is most suspect.
+
+**What MDL-compliant fitness would look like (§4):** choose an
+instruction set, encode the tree under it, encode the residuals
+as literals (or as their fitted-model log-likelihood). Sum the bits.
+
+**Why this hasn't been standard practice (§5):**
+- Kolmogorov complexity is uncomputable; approximations are
+  necessary (BIC, AIC, NML, prequential)
+- Gaussian-residual assumption is often near-optimal in physics
+- Differentiability matters for const-opt (BIC differentiable;
+  arithmetic-coded MDL not)
+- Computational cost of even cheap MDL approximations
+- AIT is not common-knowledge in mainstream ML
+
+**Three falsifiable next steps (§6):**
+1. Cheapest: swap `parsimony × cx` for `log(N) × cx / 2` (BIC).
+   ~1 hour + multi-hour runs. Rerun Feynman + MNIST.
+2. Add Student's-t residual loss as alternative to mse_loss. Half day.
+3. Full per-sample literal encoding (Bowery-extreme). 1-2 days;
+   needs arithmetic coding.
+
+**Connection to existing notes (§8):**
+- `fit_as_perfect_info_game.md`: framing UNCHANGED by switching
+  fitness. MDL is a different loss landscape over the same state.
+- `network_sr_and_budget_allocation.md`: deterministic admissible
+  search applies identically to MDL landscape.
+- `high_dim_symbolic_regression.md`: MDL view sharpens the
+  inductive-bias-mismatch claim — residual structure that the
+  pointwise alphabet can't represent becomes a quantifiable bit-cost.
+
+**Honest verdict (§9):** Bowery is substantively right for benchmarks
+where tessera struggles most; substantively wrong as a knock-down
+argument because computability + differentiability make full MDL
+impractical. The right response: test the cheapest implementable
+MDL approximation (BIC-style) and let the empirical result decide.
+
+Suggested next promotion: BIC-style complexity penalty experiment
+(§6 item 1). One-line code change in the GP scoring; multi-hour
+rerun; clean A/B on existing benchmarks.
+
 ### Added (`atan2`/`acos`/`asin` primitives + IK rerun reveals new failure mode)
 
 Per `docs/planned/roadmap.md` §2.3 (now in "Recently shipped").
