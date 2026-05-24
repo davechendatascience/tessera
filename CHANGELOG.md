@@ -6,6 +6,67 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (trigonometric primitives `sin`, `cos`) — lifecycle ship #1
+
+First feature to follow the full lifecycle from `docs/process.md`:
+RESEARCH (§4.1 in `benchmark_score_improvement.md`) → PLANNED
+(`roadmap.md` §2.3) → IN PROGRESS → SHIPPED (this entry). All four
+mechanical updates landed in one commit.
+
+**Implementation:**
+- `tessera.expression.tree.UN_OP_FNS`: added `sin`, `cos` via
+  backend-polymorphic helpers `_sin(x) = xp.sin(...)` and
+  `_cos(x) = xp.cos(...)`. Unlike sqrt/exp/log/pow, sin/cos are bounded
+  everywhere on the reals — no protected form needed.
+- `tessera.expression.interval`: conservative `[-1, 1]` bounds for
+  both. Tightness (exploiting monotonicity within ±π/2 intervals) is
+  deferred; soundness is preserved for B&B pruning.
+- `tessera.expression.mutation._OP_SWAP_GROUPS`: added `{sin, cos}`
+  so the GP can swap between them via op_swap.
+
+**11 new tests** in `tests/expression/test_sin_cos.py`: op-table
+registration, numpy correctness, Pythagorean identity check
+(`sin² + cos² == 1` on random inputs), JAX dispatch + jit-compile
+compatibility, interval soundness, simplifier constant-folding,
+op_swap behaviour.
+
+**Empirical A/B test** (`benchmarks/results/feynman_extended.md`):
+
+| Equation | Before | After | Verdict |
+|---|---|---|---|
+| I.12.11 `q*(Ef + B*v*sin(θ))` | 0.32 FAILED | **0.076 PARTIAL** | ✓ improved |
+| I.26.2 `arcsin(n*sin(θ))` | FAILED | still FAILED (rel=nan) | needs `arcsin`; sampler also produces NaN when n·sin(θ) > 1 |
+| I.30.3 `I0·sin(nθ/2)²/sin(θ/2)²` | 0.16 PARTIAL | 0.21 FAILED | regressed — search-space dilution + division-by-near-zero |
+
+Headline shift: 9 exact / 14 partial / 7 failed → **8 exact / 15
+partial / 7 failed.** One equation dropped from EXACT to PARTIAL
+(same alphabet-expansion search dilution we saw with sqrt/exp/log/pow).
+
+**The acceptance criterion was only partially met** — matches the
+"modest" falsification case from `benchmark_score_improvement.md` §5.
+This is the honest outcome documented in the research doc back-pointer.
+
+Lessons (now noted in the research doc):
+- Expanding the unary alphabet dilutes search; per-op benefit must
+  clear the dilution cost.
+- `arcsin` is a separately-needed op.
+- Some equations have intrinsic numerical issues (division by
+  near-zero in I.30.3) that vocabulary additions can't fix.
+- Op-weight curriculum could net out positive (raise sin/cos weight
+  only for problems where the alphabet currently can't represent
+  them); future work.
+
+**Test count: 508 passing** (was 497; +11).
+
+**Lifecycle close-out** (per `docs/process.md` stage 4):
+- `roadmap.md` §2.3 moved to "Recently shipped (pointers, not detail)"
+- `benchmark_score_improvement.md` §4.1 status flipped ▷ → ✓ with
+  empirical outcome table inline
+- TaskCreate #74 closed
+- No new `docs/shipped/X.md` doc — the CHANGELOG entry + tests
+  already explain why+how; the "design notes worth keeping"
+  heuristic from process.md said skip the design doc.
+
 ### Added (research note: improving scores on existing benchmarks)
 
 New `docs/research/benchmark_score_improvement.md` (8 sections) — the

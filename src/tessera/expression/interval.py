@@ -342,10 +342,28 @@ def _ival_exp(a: Interval) -> Interval:
     return Interval(math.exp(lo_x), math.exp(hi_x))
 
 
+def _ival_sin(a: Interval) -> Interval:
+    """sin: bounded [-1, 1] everywhere. Conservative interval — does
+    NOT exploit monotonicity within ±π/2 intervals. Tightness deferred."""
+    # Tight bound: if the interval is short enough to lie within a
+    # monotone region, we could compute sin(lo), sin(hi) and order. But
+    # detecting "no π/2+kπ in the interval" is fiddly and the conservative
+    # bound is sound. Pruning correctness preserved; tightness left
+    # for a future refinement (see docs/research/fit_as_perfect_info_game.md
+    # §12 on tightening B&B bounds).
+    return Interval(-1.0, 1.0)
+
+
+def _ival_cos(a: Interval) -> Interval:
+    """cos: same as sin; bounded [-1, 1]."""
+    return Interval(-1.0, 1.0)
+
+
 _UN_IVAL_FNS = {
     "neg": _ival_neg, "abs": _ival_abs, "tanh": _ival_tanh,
     "sign": _ival_sign, "step": _ival_step,
     "sqrt": _ival_sqrt, "log": _ival_log, "exp": _ival_exp,
+    "sin": _ival_sin, "cos": _ival_cos,
     "reduce_mean": _ival_reduce_minmax,
     "reduce_max":  _ival_reduce_minmax,
     "reduce_sum":  _ival_reduce_sum,

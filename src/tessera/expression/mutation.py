@@ -355,6 +355,7 @@ _OP_SWAP_GROUPS: list[set[str]] = [
     {"tanh", "sign"},
     {"abs", "neg"},
     {"sqrt", "log", "exp"},
+    {"sin", "cos"},
 ]
 
 

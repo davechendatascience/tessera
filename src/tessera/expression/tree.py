@@ -199,6 +199,20 @@ def _safe_exp(x):
     return xp.exp(xp.clip(_as_float(xp, x), -_EXP_CLIP, _EXP_CLIP))
 
 
+def _sin(x):
+    """sin(x). Bounded [-1, 1] everywhere on the reals; no protected form
+    needed. Backend-polymorphic via array_module."""
+    xp = array_module(x)
+    return xp.sin(_as_float(xp, x))
+
+
+def _cos(x):
+    """cos(x). Bounded [-1, 1] everywhere on the reals; no protected form
+    needed. Backend-polymorphic via array_module."""
+    xp = array_module(x)
+    return xp.cos(_as_float(xp, x))
+
+
 def _step(x):
     xp = array_module(x)
     return (xp.asarray(x) > 0.0).astype(xp.float64)
@@ -220,6 +234,11 @@ UN_OP_FNS: dict[str, Callable] = {
     "sqrt": _safe_sqrt,
     "log":  _safe_log,
     "exp":  _safe_exp,
+    # Trigonometric. Bounded [-1, 1] on the reals — no protection
+    # required. Standard Feynman physics primitives (PySR ships these by
+    # default).
+    "sin":  _sin,
+    "cos":  _cos,
     # Reductions: array → scalar. Always reduce ALL axes. Used to convert
     # a 2-D feature map into a translation-invariant scalar prediction
     # (see docs/research/invariance_in_sr.md). The GP can place

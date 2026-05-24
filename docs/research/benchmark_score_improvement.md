@@ -90,7 +90,25 @@ To match AI Feynman's headline (~100% with their full pipeline) would require us
 
 ## 4. Hypotheses worth empirically testing
 
-### 4.1 ○ PLANNED — Add `sin`, `cos` primitives
+### 4.1 ✓ DONE — Add `sin`, `cos` primitives
+
+> **Shipped on 2026-05-24**: `sin`, `cos` added to `UN_OP_FNS`, interval bounds, op_swap group, 11 new tests in `tests/expression/test_sin_cos.py`. See CHANGELOG.
+>
+> **Empirical outcome on the 3 trig Feynman equations** (re-running `benchmarks/run_feynman_extended.py`):
+>
+> | Equation | Before | After | Verdict |
+> |---|---|---|---|
+> | I.12.11 `q*(Ef + B*v*sin(θ))` | 0.32 FAILED | **0.076 PARTIAL** | ✓ improved |
+> | I.26.2 `arcsin(n*sin(θ))` | FAILED | still FAILED (rel=nan) | needs `arcsin` (different op); also benchmark sampler generates NaN when n·sin(θ) > 1 |
+> | I.30.3 `I0·sin(nθ/2)²/sin(θ/2)²` | 0.16 PARTIAL | 0.21 FAILED | regressed — search-space dilution + division-by-near-zero at θ→0 in the formula itself |
+>
+> Net: 1 of 3 trig equations clearly improved. Headline shifted from 9 exact / 14 partial / 7 failed → **8 exact / 15 partial / 7 failed** (one equation lost an EXACT due to expanded-alphabet search dilution, same pattern as sqrt/exp/log/pow). **The acceptance criterion ("all 3 trig equations move from FAILED to PARTIAL or EXACT") was only partially met** — matches the "modest" falsification case from §5.
+>
+> **Lessons learned (carry into future ops-vocabulary additions):**
+> - Expanding the unary alphabet dilutes search; the per-op benefit must clear the dilution cost.
+> - `arcsin` is a separately-needed op; sin alone doesn't help I.26.2.
+> - Some Feynman equations (I.30.3) have intrinsic numerical issues (division by near-zero) that vocabulary additions can't address.
+> - Curriculum / op-weight scheduling (raise sin/cos weight only for problems where rel < threshold without trig) would likely net out positive across the benchmark.
 
 **What:** add `np.sin`, `np.cos` to `UN_OP_FNS`. Interval bounds: `[-1, 1]` (monotone on quarter-periods only — use conservative `[-1, 1]` for the interval evaluator). Simplifier folds: `sin(0) = 0`, `cos(0) = 1`, `sin(neg(x)) = neg(sin(x))`, etc.
 

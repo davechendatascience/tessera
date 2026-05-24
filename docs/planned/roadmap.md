@@ -129,6 +129,7 @@ Done items previously listed here have been moved to:
 
 | Item | Status | Where |
 |---|---|---|
+| Trigonometric primitives (`sin`, `cos`) | ✓ DONE | `tessera.expression.tree.UN_OP_FNS`; from `docs/research/benchmark_score_improvement.md` §4.1 |
 | Hall of Fame (per-cx best-ever store) | ✓ DONE | `tessera.search.HallOfFame`; see `src/tessera/search/README.md` |
 | Algebraic simplifier | ✓ DONE | `tessera.expression.simplify` + `simplify_ac` |
 | Const-opt (Nelder-Mead, every K gens) | ✓ DONE | `tessera.search.optimize_constants` |
