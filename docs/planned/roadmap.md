@@ -70,6 +70,25 @@ These items were promoted from `docs/research/high_dim_symbolic_regression.md` �
 
 **Acceptance criterion:** with `prune_by_lower_bound=True` (default for MSE), the GP run on a Feynman benchmark equation prunes ≥ 30% of candidates per generation (median across 5 seeds) without changing the Pareto front it returns. Wall-clock per generation drops by ≥ 20% over the same problem without pruning.
 
+### 2.3 3-DoF planar arm inverse kinematics benchmark ▷ IN PROGRESS
+
+**Origin:** [`docs/research/sr_for_inverse_kinematics.md`](../research/sr_for_inverse_kinematics.md) §3.
+
+**What:** implement `benchmarks/run_ik_planar_3dof.py`. A 3-link planar arm (L1 = L2 = L3 = 1, three revolute joints) is the cleanest possible IK benchmark: known analytical inverse, no physics engine needed, two-link variant has been used as an SR test bed before. Run three independent SR runs (one per joint angle), each scoring per-sample on a synthetic train/test split, and report:
+
+- Per-joint test R² and rel-to-variance
+- Discovered tree (cx, train_loss) for each joint
+- Tiered verdict (A: all 3 exact / B: mixed / C: all partial / D: all failed)
+- Per-joint failure mode (sin/cos sufficient vs atan2 needed)
+
+**Why now:** first concrete validation of the *unit-architecture* question raised in [`high_dim_symbolic_regression.md`](../research/high_dim_symbolic_regression.md) §6 — does per-joint specialised SR actually beat the universal-GP baseline on the same problem? Empirical answer determines whether the unit-architecture (per `§6.7`) is worth committing to.
+
+Also: tessera's first robotics benchmark; bridges to the broader visual-servoing direction the user has flagged as their professional area.
+
+**Effort:** ~1 day. Hand-coded FK + 3 SR runs + reporting. No physics engine dependency.
+
+**Acceptance criterion:** the benchmark runs to completion and produces a report. The empirical result is interpretation, not pass/fail — Tier A (all exact) is publishable; Tier B confirms atan2 gap; Tier C/D is informative as negative result.
+
 ## 3. Reading list
 
 (Reference material, not status-flagged.)

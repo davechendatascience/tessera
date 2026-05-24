@@ -47,6 +47,8 @@ Three structural matches:
 
 ## 3. Concrete benchmark proposal
 
+> **Promoted to IN PROGRESS on 2026-05-24**: see [`docs/planned/roadmap.md`](../planned/roadmap.md) §2.3. This section's design is the active spec for the benchmark implementation.
+
 A 3-DoF planar arm benchmark, runnable end-to-end in tessera + numpy (no physics engine needed for this geometry):
 
 ### 3.1 Setup

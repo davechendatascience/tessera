@@ -137,7 +137,119 @@ Five directions that are *scalable* in the sense of "each one buys orders-of-mag
 
 **Tessera status:** not implemented. `random_tree` currently has no sparsity prior.
 
-## 6. The novelty claim (what tessera could publish)
+## 6. Unit SR architecture: Knuth's category-matching problem applied to SR
+
+**Provenance:** added 2026-05-24 in response to the user's framing: *"I definitely need to figure out the architectural design of unit SR, as our name tessera suggests. We haven't done a full scale research of high-dimensional SR and what that means. The assignment of special unit to special subproblems is probably a Knuth's category problem."*
+
+This section is the **architectural research question that precedes implementation**. Sections §5.1-§5.5 listed scalable upgrades that share a *universal-GP* assumption. Section §6 questions that assumption and proposes a unit-architecture as the next-level design.
+
+### 6.1 The tessera metaphor, taken literally
+
+The library is named *tessera* — Latin for *tile*. A tessera is a small, self-contained unit; mosaics are *assemblies* of tessera. The name encodes a design philosophy: complex models built from small composable units, each tuned to its purpose (border tiles, repeating-pattern tiles, special-feature tiles).
+
+The current implementation does not yet realise this. Today's tessera is a single GP engine with one universal primitive set, used identically for time-series, Feynman, MNIST, chess, and (soon) IK. One tile, doing everything. The MNIST 71% ceiling (with the 0.4pt train-test gap signature) is evidence that this universal approach hits a structural limit for problems whose category isn't well-served by general pointwise GP.
+
+The architectural design question for the next research phase: **what are the "tiles"?**
+
+### 6.2 Knuth's category-matching pattern
+
+The user's pointer to Knuth is sharp. TAOCP Volume 4 (A and B) is **organised by problem structure**, not by application:
+
+| TAOCP §  | Problem category | Specialised algorithm |
+|---|---|---|
+| 7.1 | Set-of-bits | bitwise tricks (popcount, Hamming) |
+| 7.2.1.1 | All permutations | Heap's algorithm |
+| 7.2.1.3 | All k-subsets | Banker's order |
+| 7.2.1.4 | Integer partitions | recursive enum with ordering |
+| 7.2.1.5 | Set partitions | RGS (restricted growth strings) |
+| 7.2.2 | Backtracking | constraint propagation + bound checking |
+| 7.2.2.1 | Exact cover | Dancing Links (DLX) |
+| 7.2.2.2 | Branch-and-bound | LP relaxation + cutting planes |
+| Vol 4A fasc. 1 | Set membership | BDDs / ZDDs |
+
+Knuth's organising principle: **the algorithm matches the structure of the problem**, not the structure of the input data. Backtracking for exact cover is *different* from B&B for optimisation; they're both "search" but for different problem structures.
+
+For SR, the same principle suggests: **each SR problem category deserves its own unit**, not a one-size-fits-all GP engine.
+
+### 6.3 A unit taxonomy for tessera (proposed)
+
+Eight candidate unit-types, organised by problem structure (analogous to Knuth's table above):
+
+| # | Problem category | Input shape | Output | Candidate SR unit | Current tessera status |
+|---|---|---|---|---|---|
+| 1 | **Time-series regression** | `(T,)` series | scalar or `(T,)` | GP with temporal Measure ops | ✓ shipping |
+| 2 | **Physics-style scalar regression** (Feynman) | `(K,)` features, K ≤ 9 | scalar | Pointwise GP + sin/cos + jax.grad const-opt | ✓ shipping |
+| 3 | **2D PDE discovery** | `(T, X)` field | `(T, X)` field | FunctionalOp2D + GP | ✓ shipping |
+| 4 | **Multi-feature ensemble** (MNIST-class CV) | image / high-dim vector | class scalar / vector | K independent SR + linear classifier | ○ PLANNED (step 5 from earlier) |
+| 5 | **Inverse kinematics** (low-DoF analytical) | pose vector | joint vector | Per-joint independent SR + trig + atan2 | ○ PLANNED (`sr_for_inverse_kinematics.md` §3, promoted below) |
+| 6 | **Visual servoing** | image features | joint velocities | Two-layer SR: features-unit + IK-unit | ? RESEARCH |
+| 7 | **Discrete-state policy** | board / grid | move / score | Symbolic-chess-style: feature-bank + pointwise SR | ✓ shipping (in `symbolic-chess` consuming `tessera`) |
+| 8 | **Constrained discrete enumeration** (puzzles) | partial state | full state | DLX-style enumeration over tessera trees | ? RESEARCH (§5.3) |
+
+Three observations from this table:
+
+- **Some units are already implemented but not named as units** (#1, #2, #3, #7). Recognising them as units retroactively is a documentation move, not an engineering one.
+- **Some are planned but unrealised** (#4, #5). The unit-architecture gives them a clean place to live without bloating the core GP.
+- **Some are research-only** (#6, #8). They need a unit-spec before any implementation commits.
+
+### 6.4 What makes something a "unit"? (the proposed contract)
+
+A tessera unit is a (problem_category, builder, scorer, post_processor) tuple:
+
+```
+unit = TesseraUnit(
+    category = "inverse_kinematics_low_dof",
+    applicability = {
+        "input_kind":  "pose_vector",
+        "output_kind": "joint_vector",
+        "max_dof":     6,
+    },
+    builder       = build_per_joint_population,    # creates initial pop
+    scorer        = score_against_known_fk,        # forward-kinematics-consistent loss
+    post_processor = collect_joint_formulas,       # assemble per-joint Exprs into full IK
+)
+```
+
+Four properties that distinguish a unit from "just a Python function":
+
+1. **Clear applicability contract.** Each unit declares what problem structures it claims to handle. The framework can refuse to run a unit on an out-of-scope problem (e.g., apply the IK unit to a time-series problem → error, not silent miscompute).
+2. **Empirical charter.** Each unit has *at least one benchmark* that validates it works. Adding a unit without a charter benchmark is forbidden by the lifecycle.
+3. **Shared primitives.** All units use the same `tessera.expression.tree` / `tessera.search.GP` / etc. underneath. Units don't fork the core.
+4. **Composition-friendly.** Units compose: the multi-feature-ensemble unit (#4) *uses* per-feature SR units internally; the visual-servoing unit (#6) *uses* an image-features unit and an IK unit.
+
+### 6.5 The architectural alternative we're rejecting
+
+A monolithic universal GP with a giant config of toggles (`use_2d`, `pointwise_only`, `enable_temporal`, `enable_trig`, `feature_selector`, `output_mode`, ...) is the alternative. Today's tessera is sliding toward this. Each new problem category adds new config flags; the test matrix grows quadratically; per-problem tuning is a series of one-off scripts.
+
+The Knuth-style argument against the monolith: **algorithms in the universal-toggle style can't be optimal across categories**. If "pointwise_only=True" is right for Feynman and wrong for time-series, the framework should select *automatically* by problem category, not require the user to pick.
+
+### 6.6 Status of this architectural question
+
+This section is **? RESEARCH** as of 2026-05-24. The taxonomy in §6.3 is a proposal; each row needs either empirical validation (does the unit actually beat the universal GP?) or a documented gap.
+
+Three open sub-questions:
+
+- **Q1**: Does the per-category specialised unit actually outperform the universal GP on the *same* problem, holding compute equal?
+- **Q2**: What's the right *granularity* of unit? "All robot IK" or "low-DoF analytical IK" or "Pieper arms specifically"? Knuth's answer would be: as specific as the problem structure warrants, no more.
+- **Q3**: How does unit-composition (multi-feature ensemble uses per-feature units) actually flow through the code? Need an implementation prototype to answer.
+
+The first concrete validation is the IK benchmark (`sr_for_inverse_kinematics.md` §3, promoted to PLANNED in `roadmap.md` §2.4 by the companion commit). It's a deliberate "tile" — a per-joint independent SR unit. If it beats the universal-GP baseline on the same 3-DoF planar problem, we have evidence that the unit-architecture pays off. If not, the universal-GP view is fine and §6 is academic.
+
+### 6.7 Suggested next research move
+
+Before committing to the unit-architecture as the design, do *one* unit-spec end-to-end as a test of the contract:
+
+| Step | Deliverable |
+|---|---|
+| 1 | Write a unit-spec for the **IK low-DoF** category (the cleanest case): explicit applicability, scorer, post-processor. Use the §6.4 contract. |
+| 2 | Implement the 3-DoF planar benchmark using that unit-spec. |
+| 3 | Compare against running the same problem through the universal GP (i.e., one SR call for each joint, no unit-spec). |
+| 4 | If the unit-spec gives meaningful win (cleaner code / better accuracy / less per-problem tuning), validate the architecture and promote unit-spec to a permanent abstraction. |
+| 5 | If not, abandon the unit-architecture; conclude that the universal GP with toggles is the right shape. |
+
+**Suggested next promotion**: the IK benchmark to PLANNED (done in the companion roadmap edit). The unit-spec abstraction stays as research until the benchmark result tells us whether to commit.
+
+## 7. The novelty claim (what tessera could publish)
 
 Combined, the five directions above form a research program with a distinct position:
 
@@ -151,7 +263,7 @@ Each piece exists independently in the literature:
 
 The combination targeting SR has not been published. The empirical question is whether the *combined* leverage (multiplicative across the five) closes the high-dim SR gap that has stymied the field.
 
-## 7. Honest expectations and falsification criteria
+## 8. Honest expectations and falsification criteria
 
 The research doc would be dishonest without an explicit "what would falsify this." Three honest possibilities:
 
@@ -163,7 +275,7 @@ The research doc would be dishonest without an explicit "what would falsify this
 
 Falsification criterion: if §5.1 (GPU B&B) ships and produces no measurable accuracy improvement at MNIST, that's evidence against the synthesis. We should reassess after each direction independently before committing to the full program.
 
-## 8. Concrete next experiments (status-flagged)
+## 9. Concrete next experiments (status-flagged)
 
 | Item | Direction | Effort | Status |
 |---|---|---|---|
@@ -177,7 +289,7 @@ Falsification criterion: if §5.1 (GPU B&B) ships and produces no measurable acc
 
 Suggested order: §5.5 (sparsity) and §5.1 (B&B default-on) first — cheapest, fastest feedback on whether scaling SR alphabets matters. If both yield ≥5pt MNIST improvement, commit to §5.4 (two-layer). The e-graph + ZDD directions are the most theoretically interesting but also the most uncertain in payoff.
 
-## 9. Reading list (to be expanded)
+## 10. Reading list (to be expanded)
 
 - Cranmer et al., *Discovering Symbolic Models from Deep Learning with Inductive Biases* (NeurIPS 2020, arXiv:2006.11287)
 - Udrescu & Tegmark, *AI Feynman: A Physics-Inspired Method for Symbolic Regression* (Sci. Adv. 2020, arXiv:1905.11481)
