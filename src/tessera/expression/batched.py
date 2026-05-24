@@ -157,6 +157,7 @@ def compile_topology(template: Node, var_names: Sequence[str]) -> Callable:
         )
 
     import jax
+    import jax.numpy as jnp
 
     var_names = tuple(var_names)
     key = (topology_key(template), var_names)
@@ -167,8 +168,15 @@ def compile_topology(template: Node, var_names: Sequence[str]) -> Callable:
     counter = [0]
     raw_fn = _build_parametric_fn(template, var_idx, counter)
 
-    # vmap over the leading axis of consts; args broadcast (in_axes=None)
-    vmapped = jax.vmap(raw_fn, in_axes=(None, 0))
+    # Wrap so per-tree output is always broadcast to shape [N] (= the
+    # shape of any var arg). Handles constant-only and reduce-collapsed
+    # topologies whose raw output would be a scalar; after broadcast,
+    # vmap+concat sees [K_t, N] for every group.
+    def _wrapped(args, consts):
+        out = raw_fn(args, consts)
+        return jnp.broadcast_to(out, args[0].shape)
+
+    vmapped = jax.vmap(_wrapped, in_axes=(None, 0))
     jitted = jax.jit(vmapped)
     _TOPO_CACHE[key] = jitted
     return jitted

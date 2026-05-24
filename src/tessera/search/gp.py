@@ -61,6 +61,16 @@ from .pareto import pareto_front
 from .const_opt import optimize_constants
 from .hall_of_fame import HallOfFame
 
+# Tier 3 imports: optional; only used when cfg.use_jax_population_eval=True.
+try:
+    from tessera.expression.jit import is_pure_pointwise
+    from tessera.expression.batched import evaluate_population_stacked
+    _HAS_JAX = True
+except ImportError:
+    _HAS_JAX = False
+    is_pure_pointwise = None              # type: ignore
+    evaluate_population_stacked = None    # type: ignore
+
 
 # ---------------- Config ----------------
 
@@ -145,6 +155,24 @@ class GPConfig:
     """Reject any candidate whose prediction has < min_valid_frac finite
     entries. Raised from 0.5 to 0.9 in v0.1.2 to close the
     (x-x)/(x-x) divide-by-zero pathology."""
+
+    # JAX batched population evaluation (Tier 3 integration)
+    use_jax_population_eval: bool = False
+    """If True, evaluate the pure-pointwise subset of each generation as
+    a single batched JAX call via
+    `tessera.expression.batched.evaluate_population_stacked`.
+
+    Requires `jax` to be installed. Trees containing FunctionalOp /
+    FunctionalOp2D fall back to the per-tree numpy path. Only `mse_loss`
+    is supported in the batched path; other losses (PnL etc.) fall back.
+
+    On CPU, batched vmap is overhead, not speedup -- the gain is on GPU.
+    Typical Colab T4: ~25x over numpy at MNIST scale (N=60K, K=200).
+    See benchmarks in notebooks/tessera_jax_tier3.ipynb.
+
+    When enabled, the FunctionalCache is bypassed for the batched
+    subset; JAX's own topology-keyed jit cache handles equivalent reuse.
+    """
 
     # Branch-and-bound pruning (interval arithmetic)
     prune_by_lower_bound: bool = False
@@ -252,6 +280,10 @@ class GP:
         self.prune_stats = dict(n_pruned=0, n_evaluated=0)
         self._stop_requested = False
         self._pool: ProcessPoolExecutor | None = None
+        # Tier-3 batched-eval state (populated in run() if enabled)
+        self._env_jax: dict | None = None
+        self._y_true_jax = None
+        self._feature_names_tuple: tuple = ()
 
     def stop(self) -> None:
         """Signal the run loop to exit at the next generation boundary."""
@@ -287,6 +319,22 @@ class GP:
         else:
             self._env_intervals = {}
         self.prune_stats = dict(n_pruned=0, n_evaluated=0)
+
+        # Tier-3 setup: convert env + y_true to JAX once. The batched
+        # scorer reads these via self._env_jax / self._y_true_jax.
+        if self.cfg.use_jax_population_eval and _HAS_JAX:
+            if self.loss_fn is not mse_loss:
+                if self.cfg.verbose:
+                    print("[gp] use_jax_population_eval=True but loss_fn is not "
+                          "mse_loss; batched JAX path disabled.")
+            else:
+                import jax.numpy as jnp
+                self._env_jax = {k: jnp.asarray(v) for k, v in env.items()}
+                self._y_true_jax = jnp.asarray(y_true)
+                self._feature_names_tuple = tuple(feature_names)
+        else:
+            self._env_jax = None
+            self._y_true_jax = None
 
         pop = self._init_population(feature_names, env, y_true)
         self.hall_of_fame.update_many(pop)
@@ -351,10 +399,11 @@ class GP:
     # ---- internals ----
 
     def _init_population(self, feature_names, env, y_true):
-        pop: list[Candidate] = []
+        # Collect valid trees first, then score in a batch
+        trees: list[Node] = []
         attempts = 0
         max_attempts = self.cfg.pop_size * 10
-        while len(pop) < self.cfg.pop_size and attempts < max_attempts:
+        while len(trees) < self.cfg.pop_size and attempts < max_attempts:
             attempts += 1
             tree = random_tree(
                 self.rng, feature_names,
@@ -364,13 +413,115 @@ class GP:
             )
             if validate_tree(tree, set(feature_names)) is not None:
                 continue
-            pop.append(self._score(tree, env, y_true, born_gen=0))
-        if len(pop) < self.cfg.pop_size:
+            trees.append(tree)
+        if len(trees) < self.cfg.pop_size:
             raise RuntimeError(
                 f"could not initialise {self.cfg.pop_size} valid trees "
                 f"in {max_attempts} attempts"
             )
-        return pop
+        if self._env_jax is not None:
+            return self._score_batch(trees, env, y_true, born_gen=0)
+        return [self._score(t, env, y_true, born_gen=0) for t in trees]
+
+    def _score_batch(self, trees, env, y_true, born_gen):
+        """Tier-3 batched scoring. Partitions `trees` into pure-pointwise
+        (eligible for JAX batching) and mixed (per-tree fallback). The
+        pointwise subset is evaluated as one batched JAX call.
+
+        Returns a list of Candidates in input order. Side-effect-equivalent
+        to calling `_score` per tree, except the batched subset bypasses
+        the FunctionalCache (irrelevant for pointwise trees anyway) and
+        the B&B prune (which is per-tree and not yet batched).
+        """
+        if self._env_jax is None:
+            # Batched eval disabled or not applicable — fall back per-tree
+            return [self._score(t, env, y_true, born_gen) for t in trees]
+
+        # Simplify first (matches _score behavior)
+        if self.cfg.simplify_trees:
+            trees = [simplify(t) for t in trees]
+
+        # Partition: pure-pointwise (batched JAX) vs mixed (per-tree)
+        results: list = [None] * len(trees)
+        batch_idx: list[int] = []
+        for i, t in enumerate(trees):
+            if is_pure_pointwise(t):
+                batch_idx.append(i)
+
+        # Per-tree fallback for mixed trees (FunctionalOp etc.)
+        for i, t in enumerate(trees):
+            if i not in set(batch_idx):
+                # _score already simplifies; pass simplified tree, set flag
+                results[i] = self._score_no_simplify(t, env, y_true, born_gen)
+
+        if not batch_idx:
+            return results
+
+        # Batched JAX eval
+        import jax.numpy as jnp
+        batch_trees = [trees[i] for i in batch_idx]
+        cxs = [complexity(t) for t in batch_trees]
+
+        preds = evaluate_population_stacked(
+            batch_trees, self._env_jax, var_names=self._feature_names_tuple
+        )                                                     # [K, N]
+        # NaN-safe MSE per row + min_valid_frac filter
+        finite = jnp.isfinite(preds)
+        n_valid = finite.sum(axis=1)                          # [K]
+        N = preds.shape[1]
+        # Replace non-finite predictions with the corresponding y_true so
+        # they contribute 0 to the squared error (then we divide by n_valid
+        # to get per-row mean over valid entries only).
+        safe_preds = jnp.where(finite, preds, self._y_true_jax)
+        sq_err = (safe_preds - self._y_true_jax) ** 2         # [K, N]
+        mse = sq_err.sum(axis=1) / jnp.maximum(n_valid, 1)    # [K]
+        valid_frac = n_valid / N
+        loss_vec = jnp.where(
+            (n_valid > 0) & (valid_frac >= self.cfg.min_valid_frac),
+            mse,
+            jnp.inf,
+        )
+        losses_np = np.asarray(loss_vec.block_until_ready())  # one sync
+
+        self.prune_stats["n_evaluated"] += len(batch_idx)
+        for j, i in enumerate(batch_idx):
+            l = float(losses_np[j])
+            cx = cxs[j]
+            fitness = l + self.cfg.parsimony * cx
+            results[i] = Candidate(
+                tree=trees[i], train_loss=l, complexity=cx,
+                fitness=fitness, born_gen=born_gen,
+            )
+        return results
+
+    def _score_no_simplify(self, tree, env, y_true, born_gen):
+        """Like _score but skips the simplify step (caller already did it)."""
+        cx = complexity(tree)
+        if self._env_intervals and self._current_front:
+            try:
+                pred_iv = interval_evaluate(tree, self._env_intervals)
+                if pred_iv.lo > -float("inf") or pred_iv.hi < float("inf"):
+                    lb = mse_lower_bound(pred_iv.lo, pred_iv.hi, y_true)
+                    threshold = pareto_threshold(self._current_front, cx)
+                    if lb >= threshold:
+                        self.prune_stats["n_pruned"] += 1
+                        return Candidate(
+                            tree=tree, train_loss=float("inf"),
+                            complexity=cx, fitness=float("inf"),
+                            born_gen=born_gen,
+                        )
+            except Exception:
+                pass
+        self.prune_stats["n_evaluated"] += 1
+        loss = _evaluate_tree(
+            tree, env, y_true, self.cache,
+            fill_warmup=self.cfg.fill_warmup,
+            loss_fn=self.loss_fn,
+            min_valid_frac=self.cfg.min_valid_frac,
+        )
+        fitness = loss + self.cfg.parsimony * cx
+        return Candidate(tree=tree, train_loss=loss, complexity=cx,
+                         fitness=fitness, born_gen=born_gen)
 
     def _score(self, tree, env, y_true, born_gen):
         if self.cfg.simplify_trees:
@@ -454,6 +605,8 @@ class GP:
         if self._pool is not None:
             tasks = [(t, gen) for t in new_trees]
             return list(self._pool.map(_score_in_worker, tasks))
+        if self._env_jax is not None:
+            return self._score_batch(new_trees, env, y_true, born_gen=gen)
         return [self._score(t, env, y_true, born_gen=gen) for t in new_trees]
 
     def _survive(self, pop, offspring, front):

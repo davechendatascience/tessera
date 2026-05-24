@@ -6,6 +6,58 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (GP integration with JAX batched eval — Tier 3-A)
+- **`GPConfig.use_jax_population_eval: bool = False`** flag. When True,
+  the GP loop's `_init_population` and `_breed` route each generation's
+  candidates through `_score_batch`, which partitions trees into:
+    pure-pointwise (eligible for batched JAX via
+       `evaluate_population_stacked`)  → one batched kernel
+    mixed (containing FunctionalOp / FunctionalOp2D)
+       → per-tree numpy path (existing `_score`)
+- The batched path supports only `mse_loss`. Other losses (PnL etc.)
+  silently disable the JAX path with a verbose-mode warning.
+- Per-tree NaN-validity check moved to a vectorized form: `n_valid =
+  isfinite(preds).sum(axis=1)`, then `valid_frac >= min_valid_frac`
+  filter applied as a `jnp.where`. Same semantics as the per-tree path.
+- **7 new tests** in `tests/test_gp_jax_integration.py`: flag exists,
+  env_jax is populated when enabled, custom loss disables the path,
+  the JAX path finds a low-loss candidate, both paths run to
+  completion on the same problem, mixed-functional populations route
+  correctly, init-population uses batched.
+
+**Bug fix during integration (jit-safety of reduce ops):**
+The `_reduce_mean/max/sum/std` ops in `tree.py` were using Python
+`int()` and `float()` on the masked-sum to branch on "any valid data?".
+These break inside `jax.jit` (abstract-tracing can't cast). Rewrote
+them as `jnp.where`-based computations that stay inside XLA. Side
+effect: reduce ops now return scalar arrays instead of Python floats,
+which broadcasts correctly with downstream ops.
+
+**Bug fix during integration (constant-only and reduce-collapsed trees):**
+The GP can generate trees whose output is a SCALAR (e.g. `Const(1.0)`
+alone, or `reduce_mean(tree)`). vmap+concat in `evaluate_population_stacked`
+rejected these because their shape `[K_t]` doesn't concatenate with
+the `[K_t, N]` shape of var-containing trees. Fixed by broadcasting
+each tree's output to `[N]` in `compile_tree` and `compile_topology`:
+```
+def _wrapped(args, consts):
+    out = raw_fn(args, consts)
+    return jnp.broadcast_to(out, args[0].shape)
+```
+This adds a no-op broadcast for [N] outputs and an actual broadcast
+for scalar outputs, eliminating shape mismatches in the GP path.
+
+**Honest performance note:** on CPU, `use_jax_population_eval=True`
+is dramatically SLOWER than the default numpy path (~175× slower
+on a small N=5000 pop=80 gens=20 run, mostly because mutation
+produces new tree topologies each generation and each pays a ~100ms
+one-time JAX compile). The integration's purpose is GPU, where
+the user's Colab benchmark measured **25× speedup over numpy at
+N=60K**. Best loss is identical between paths -- correctness is
+preserved.
+
+**Full test count: 460 passing** (453 + 7 GP integration tests).
+
 ### Added (GPU backend — Tier 3: batched-population vmap evaluation)
 - **`tessera.expression.batched`** module — topology-clustered batched
   evaluation:

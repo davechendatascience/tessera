@@ -119,9 +119,21 @@ def compile_tree(tree: Node, var_names: Sequence[str]) -> Callable:
     if key in _CACHE:
         return _CACHE[key]
 
+    import jax.numpy as jnp
+
     var_idx = {v: i for i, v in enumerate(var_names)}
     raw_fn = _build_fn(tree, var_idx)
-    jitted = jax.jit(raw_fn)
+
+    # Wrap so the output is always broadcast to the shape of the first
+    # input (= [N]). Handles constant-only trees (output is a Python
+    # float) and reduce_*-wrapped trees (output is a scalar array) by
+    # broadcasting them up to a length-N vector. For trees that already
+    # produce [N], the broadcast_to is a no-op.
+    def _wrapped(args):
+        out = raw_fn(args)
+        return jnp.broadcast_to(out, args[0].shape)
+
+    jitted = jax.jit(_wrapped)
     _CACHE[key] = jitted
     return jitted
 

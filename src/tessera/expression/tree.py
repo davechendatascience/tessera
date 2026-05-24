@@ -122,53 +122,60 @@ BIN_OP_FNS: dict[str, Callable] = {
 BIN_OPS = tuple(BIN_OP_FNS.keys())
 
 # Unary reductions. Reduce to scalar; use NaN-safe mean/max/sum/std.
-# Backend-polymorphic via array_module dispatch. JAX-compatible: replace
-# boolean indexing with where-mask + count.
+# Backend-polymorphic via array_module dispatch. **Jit-safe:** no
+# Python int()/float() casts on traced values; we use where-mask
+# arithmetic so the entire reduce computation lives inside XLA when
+# called under jax.jit.
+#
+# Return type: scalar array (numpy float64 or jax.Array scalar). Both
+# broadcast correctly against downstream BinOp/UnOp; callers must NOT
+# assume Python float.
 def _reduce_mean(x):
     xp = array_module(x)
     x = xp.asarray(x)
     mask = xp.isfinite(x)
     n_valid = mask.sum()
-    if int(n_valid) == 0:
-        return float("nan")
     safe = xp.where(mask, x, xp.zeros_like(x))
-    return float(safe.sum() / n_valid)
+    # If n_valid == 0, return NaN (without branching on traced value)
+    return xp.where(n_valid > 0,
+                    safe.sum() / xp.maximum(n_valid, 1),
+                    xp.nan)
 
 
 def _reduce_max(x):
     xp = array_module(x)
     x = xp.asarray(x)
     mask = xp.isfinite(x)
-    if int(mask.sum()) == 0:
-        return float("nan")
-    # Replace non-finite with -inf so max ignores them
+    # Replace non-finite with -inf so they don't affect max
     safe = xp.where(mask, x, -xp.inf)
-    return float(safe.max())
+    val = safe.max()
+    return xp.where(mask.any(), val, xp.nan)
 
 
 def _reduce_sum(x):
     xp = array_module(x)
     x = xp.asarray(x)
     mask = xp.isfinite(x)
-    if int(mask.sum()) == 0:
-        return float("nan")
     safe = xp.where(mask, x, xp.zeros_like(x))
-    return float(safe.sum())
+    val = safe.sum()
+    return xp.where(mask.any(), val, xp.nan)
 
 
 def _reduce_std(x):
     xp = array_module(x)
     x = xp.asarray(x)
     mask = xp.isfinite(x)
-    n_valid = int(mask.sum())
-    if n_valid == 0:
-        return float("nan")
-    if n_valid < 2:
-        return 0.0
+    n_valid = mask.sum()
     safe = xp.where(mask, x, xp.zeros_like(x))
-    mean = safe.sum() / n_valid
-    var = xp.where(mask, (x - mean) ** 2, xp.zeros_like(x)).sum() / n_valid
-    return float(xp.sqrt(var))
+    mean = safe.sum() / xp.maximum(n_valid, 1)
+    var_sum = xp.where(mask, (x - mean) ** 2, xp.zeros_like(x)).sum()
+    var = var_sum / xp.maximum(n_valid, 1)
+    std = xp.sqrt(var)
+    # If n_valid < 2 → return 0; if n_valid == 0 → return NaN.
+    # Combine: 0 if any finite + < 2 valid, NaN if no finite at all.
+    return xp.where(n_valid >= 2,
+                    std,
+                    xp.where(n_valid >= 1, xp.zeros_like(std), xp.nan))
 
 
 # Protected transcendentals. PySR conventions (`safe_sqrt`, `safe_log`,

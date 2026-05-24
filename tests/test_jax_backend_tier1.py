@@ -92,13 +92,16 @@ def test_un_op_returns_jax_array(op):
 
 @pytest.mark.parametrize("op", ["reduce_mean", "reduce_max", "reduce_sum", "reduce_std"])
 def test_reduce_op_works_on_jax(op):
+    """Reduce ops return scalar arrays (numpy float64 or jax scalar)
+    rather than Python float, so that the result is jit-traceable.
+    Downstream BinOp/UnOp broadcasts handle this transparently."""
     from tessera.expression.tree import UN_OP_FNS
     x = jnp.array([1.0, 2.0, 3.0, 4.0])
     y = UN_OP_FNS[op](x)
-    # Reduce ops return Python float (scalar) — type-agnostic
-    assert isinstance(y, float)
+    # Result should be a 0-d JAX array or scalar
+    assert hasattr(y, "shape"), f"{op}: expected an array-like, got {type(y)}"
     expected = UN_OP_FNS[op](np.asarray(x))
-    np.testing.assert_allclose(y, expected, rtol=1e-5)
+    np.testing.assert_allclose(float(y), float(expected), rtol=1e-5)
 
 
 # ---------------- Measure.apply on JAX inputs ----------------
