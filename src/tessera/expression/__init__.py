@@ -65,6 +65,11 @@ from .jit import (
     compile_tree, evaluate_jit, is_pure_pointwise,
     clear_jit_cache, jit_cache_size,
 )
+from .batched import (
+    topology_key, extract_constants, n_constants,
+    compile_topology, evaluate_population,
+    clear_topo_cache, topo_cache_size,
+)
 
 __all__ = [
     # measure
@@ -84,6 +89,10 @@ __all__ = [
     # jit
     "compile_tree", "evaluate_jit", "is_pure_pointwise",
     "clear_jit_cache", "jit_cache_size",
+    # batched (Tier 3)
+    "topology_key", "extract_constants", "n_constants",
+    "compile_topology", "evaluate_population",
+    "clear_topo_cache", "topo_cache_size",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",

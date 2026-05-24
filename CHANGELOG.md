@@ -6,6 +6,35 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (GPU backend — Tier 3: batched-population vmap evaluation)
+- **`tessera.expression.batched`** module — topology-clustered batched
+  evaluation:
+  - `topology_key(tree)`: structural identifier with Const values erased
+    (e.g. `BinOp("add", Var("x"), Const(1.0))` and `Const(5.0)` share
+    `"add(x,C)"`)
+  - `extract_constants(tree)`: pre-order list of Const values
+  - `compile_topology(template, var_names)`: builds a function
+    `f(args, consts_batch)` where `consts_batch` is `[K, M]`. Inside,
+    `jax.vmap` over the K axis + `jax.jit`. Cached by topology.
+  - `evaluate_population(trees, env)`: groups trees by topology, runs
+    one vmapped jit call per cluster, returns outputs in input order.
+- **14 new tests** in `tests/test_jax_backend_tier3.py`: topology
+  fingerprinting, constants extraction order, single+multi-topology
+  populations, ordering preservation, FunctionalOp rejection, and a
+  correctness smoke test on a realistic 20-tree population.
+- **`notebooks/tessera_jax_tier3.ipynb`** — demonstrates Tier 3 on
+  Colab. Builds a 200-tree population with ~10 topologies (realistic
+  late-GP shape), times numpy / per-tree-jit / batched-vmap at
+  N=10K/60K/600K. Expected GPU speedup: 2-10× over Tier 2 at K=200.
+
+**Honest caveat:** vmap is a GPU optimization. On CPU JAX, batched-vmap
+runs SLOWER than per-tree-jit because there are no SIMD lanes to fill
+— the extra batch dimension is pure overhead. The 14 tests assert
+**correctness only** (outputs match per-tree path). The actual speedup
+shows up on GPU; see the Colab notebook.
+
+**Full test count: 449 passing** (435 + 14). No regressions.
+
 ### Added (GPU backend — Tier 2: jit-compile pointwise trees)
 - **`tessera.expression.jit`** module — JAX jit-compilation of
   pure-pointwise Expr trees:
