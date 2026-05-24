@@ -47,7 +47,17 @@ Three structural matches:
 
 ## 3. Concrete benchmark proposal
 
-> **Promoted to IN PROGRESS on 2026-05-24**: see [`docs/planned/roadmap.md`](../planned/roadmap.md) §2.3. This section's design is the active spec for the benchmark implementation.
+> **Shipped on 2026-05-24** as `benchmarks/run_ik_planar_3dof.py`. Result documented in `benchmarks/results/ik_planar_3dof.md`. **Empirical outcome: Tier D** (all 3 joints failed, test rel ∈ {0.33, 0.73, 0.35}).
+>
+> The result confirms the §7 prediction that `sin/cos` alone is insufficient; **the `atan2`/`acos` gap is real**. q2 (which uses `acos` in the analytical form) hit test_rel=0.73 — the worst by a wide margin, matching the analytical structure. q1 and q3 (which use `atan2`) reached test_rel≈0.34, still failed.
+>
+> **Inspecting the discovered trees confirms the diagnosis:**
+> - **q2**: `sqrt(0.97 + cos(x) + cos(y) + cos(y) + cos(...))` — algebraic combinations of `cos` trying to approximate `acos((r²-2)/2)`. Without `acos`, hopeless.
+> - **q1, q3**: composite with `θ/-2.0` linear approximations and indicator/comparison flags trying to encode quadrant information that `atan2` would give cleanly.
+>
+> **Verdict**: the unit-architecture validation question (`high_dim_sr §6.7`) is NOT yet answered by this benchmark — the universal-GP baseline failed for vocabulary reasons, not because per-joint specialised SR was missing. The next experiment is the same benchmark **after adding `atan2`/`acos`** primitives; if THAT produces tier A or B, we'll have evidence that the universal GP with the right vocab is sufficient, *and* that the unit-architecture is unnecessary for IK at this scale.
+>
+> Tracked as `sr_for_inverse_kinematics.md` §4.7 below (new).
 
 A 3-DoF planar arm benchmark, runnable end-to-end in tessera + numpy (no physics engine needed for this geometry):
 
@@ -134,6 +144,8 @@ The composition is interesting: tessera's existing measure-theoretic ops (`Linea
 
 1. **Does plain SR rediscover 3-DoF planar IK with `sin/cos` only?**
    Cheapest experiment; ~half day to set up. Result determines whether atan2 is necessary.
+
+   > **ANSWERED 2026-05-24: NO.** Tier-D result on `benchmarks/run_ik_planar_3dof.py` (all 3 joints failed; q2 worst at test_rel=0.73 — directly tied to its `acos` dependence). The atan2/acos gap is empirically real, not theoretical. Tracked as a planned-for-ship item: add `atan2`/`acos`/`asin` primitives via the same lifecycle path that shipped `sin`/`cos` (§4.1 of `benchmark_score_improvement.md`).
 
 2. **What's the search-budget-to-accuracy curve?**
    Sweep pop=50, 200, 1000 × gens=20, 50, 100. Does compute monotonically buy accuracy?

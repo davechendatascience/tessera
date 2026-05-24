@@ -6,6 +6,58 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (3-DoF planar IK benchmark — Tier-D result confirms atan2/acos gap)
+
+New `benchmarks/run_ik_planar_3dof.py` + result file
+`benchmarks/results/ik_planar_3dof.md`. First robotics benchmark.
+
+**Setup:** 3 revolute joints, L1 = L2 = L3 = 1, elbow-up constrained
+(q2 ∈ [0, π]); 4000 train / 1000 test samples. Three independent SR
+runs (one per joint q1/q2/q3); pointwise GP + sin/cos/sqrt available
+(no atan2/acos).
+
+**Headline: Tier D** — all 3 joints failed (test rel ≥ 0.10):
+  q1: cx=27 test_rel=0.33  (33% var unexplained → 67% signal captured)
+  q2: cx=20 test_rel=0.73  (only 27% signal captured — worst by far)
+  q3: cx=23 test_rel=0.35  (65% signal captured)
+
+**The result is informative, not a failure.** It confirms §7's
+prediction from `sr_for_inverse_kinematics.md`: without `atan2` and
+`acos`, the GP can't express the analytical IK and is stuck on
+approximations. Specifically:
+
+  q2 = acos((r²-2)/2)
+    Discovered tree: sqrt(0.97 + cos(x) + cos(y) + cos(y) + ...).
+    Pure algebraic approximation of acos via sums of cos — hopeless
+    without the acos primitive.
+
+  q1, q3: involve atan2 in the analytical form
+    Discovered trees use indicator/comparison combinations and
+    linear `θ/k` rescaling to approximate quadrant info. Without
+    atan2 they get partial signal (~65%) but not exact form.
+
+**Empirically justifies the next planned-for-ship item** (§2.3 of
+roadmap.md, just promoted): add `atan2`/`acos`/`asin` primitives.
+After they ship, re-running this same benchmark should move the
+result from Tier D to at least Tier B (≥1 joint exact).
+
+**Unit-architecture question** (per `high_dim_sr §6.7`): the IK
+benchmark was designed as the first concrete test of unit-architecture
+vs universal-GP. Since the universal-GP baseline failed for VOCABULARY
+reasons rather than structural ones, the unit-architecture question
+remains UN-answered by this benchmark. The next iteration (after atan2
+ships) will be cleaner since the universal GP will then have the
+necessary vocab.
+
+**Lifecycle close-out:**
+- `roadmap.md` §2.3 (was IN-PROGRESS for benchmark implementation)
+  removed and added to "Recently shipped" with link to benchmark
+- `roadmap.md` §2.3 NEW (atan2/acos primitives) opened as ○ PLANNED
+- `sr_for_inverse_kinematics.md` §3 marked SHIPPED with empirical
+  outcome table; §6 sub-question 1 marked ANSWERED ("NO" + Tier-D
+  evidence)
+- TaskCreate #78 closed
+
 ### Added (research note: SR for inverse kinematics in simulation)
 
 New `docs/research/sr_for_inverse_kinematics.md` (10 sections). Per

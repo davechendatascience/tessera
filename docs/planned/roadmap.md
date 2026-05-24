@@ -70,24 +70,22 @@ These items were promoted from `docs/research/high_dim_symbolic_regression.md` �
 
 **Acceptance criterion:** with `prune_by_lower_bound=True` (default for MSE), the GP run on a Feynman benchmark equation prunes ≥ 30% of candidates per generation (median across 5 seeds) without changing the Pareto front it returns. Wall-clock per generation drops by ≥ 20% over the same problem without pruning.
 
-### 2.3 3-DoF planar arm inverse kinematics benchmark ▷ IN PROGRESS
+### 2.3 Add `atan2`, `acos`, `asin` primitives ○ PLANNED
 
-**Origin:** [`docs/research/sr_for_inverse_kinematics.md`](../research/sr_for_inverse_kinematics.md) §3.
+**Origin:** [`docs/research/sr_for_inverse_kinematics.md`](../research/sr_for_inverse_kinematics.md) §6.1 (empirically justified by the Tier-D result on the 3-DoF planar IK benchmark — see "Recently shipped" below).
 
-**What:** implement `benchmarks/run_ik_planar_3dof.py`. A 3-link planar arm (L1 = L2 = L3 = 1, three revolute joints) is the cleanest possible IK benchmark: known analytical inverse, no physics engine needed, two-link variant has been used as an SR test bed before. Run three independent SR runs (one per joint angle), each scoring per-sample on a synthetic train/test split, and report:
+**What:** add three trig-inverse primitives to `UN_OP_FNS` / `BIN_OP_FNS`:
+- `atan2(y, x)` — binary; quadrant-aware arctangent. Range `[-π, π]`.
+- `acos(x)` — unary; needs `x` clipped to `[-1, 1]` as a protected form (analog of `sqrt(|x|)` / `log(max(|x|, ε))`).
+- `asin(x)` — unary; same clipping.
 
-- Per-joint test R² and rel-to-variance
-- Discovered tree (cx, train_loss) for each joint
-- Tiered verdict (A: all 3 exact / B: mixed / C: all partial / D: all failed)
-- Per-joint failure mode (sin/cos sufficient vs atan2 needed)
+Plus interval bounds, op_swap groups, and simplifier folds (`acos(1)=0`, `asin(0)=0`, etc.). Same lifecycle pattern as the sin/cos ship (#1).
 
-**Why now:** first concrete validation of the *unit-architecture* question raised in [`high_dim_symbolic_regression.md`](../research/high_dim_symbolic_regression.md) §6 — does per-joint specialised SR actually beat the universal-GP baseline on the same problem? Empirical answer determines whether the unit-architecture (per `§6.7`) is worth committing to.
+**Why now:** the 3-DoF planar IK benchmark (just shipped) is Tier-D *specifically because of these missing ops*. q2 trial-discovered `sqrt(0.97 + cos(x) + cos(y) + cos(y) + ...)` — algebraic approximation of `acos((r²-2)/2)`. q1/q3 use indicator combinations to approximate `atan2`'s quadrant-awareness. Adding these three primitives is the directly-supported next step.
 
-Also: tessera's first robotics benchmark; bridges to the broader visual-servoing direction the user has flagged as their professional area.
+**Effort:** ~half day, contained. Mechanical extension of the sin/cos pattern. Tests + IK benchmark re-run.
 
-**Effort:** ~1 day. Hand-coded FK + 3 SR runs + reporting. No physics engine dependency.
-
-**Acceptance criterion:** the benchmark runs to completion and produces a report. The empirical result is interpretation, not pass/fail — Tier A (all exact) is publishable; Tier B confirms atan2 gap; Tier C/D is informative as negative result.
+**Acceptance criterion:** after these primitives ship, re-running `benchmarks/run_ik_planar_3dof.py` moves the result from Tier D to **at least Tier B** (≥1 joint exact, ≤1 failed). Tier A (all 3 exact) is the optimistic case. If even with the new primitives the result stays Tier D, that's evidence the limit is search budget / random_tree distribution, not vocabulary.
 
 ## 3. Reading list
 
@@ -137,6 +135,7 @@ Done items previously listed here have been moved to:
 
 | Item | Status | Where |
 |---|---|---|
+| 3-DoF planar IK benchmark (Tier-D result) | ✓ DONE | `benchmarks/run_ik_planar_3dof.py` + `benchmarks/results/ik_planar_3dof.md`. Tier D proved the atan2/acos gap empirically; promoted §2.3 above. |
 | `jax.grad` constant optimisation (`optimize_constants_jax`) | ✓ DONE | `tessera.search.const_opt`; GPConfig.optimize_constants_method='jax_adam' |
 | Trigonometric primitives (`sin`, `cos`) | ✓ DONE | `tessera.expression.tree.UN_OP_FNS`; from `docs/research/benchmark_score_improvement.md` §4.1 |
 | Hall of Fame (per-cx best-ever store) | ✓ DONE | `tessera.search.HallOfFame`; see `src/tessera/search/README.md` |
