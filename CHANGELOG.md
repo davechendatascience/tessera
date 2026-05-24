@@ -6,6 +6,57 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: improving scores on existing benchmarks)
+
+New `docs/research/benchmark_score_improvement.md` (8 sections) — the
+complement to the high-dim SR direction. Where the high-dim doc tackles
+"can SR scale to wide inputs?", this one tackles "can SR cleanly solve
+the standard low-dim benchmarks?"
+
+**Empirical anchor:** `benchmarks/results/feynman_extended.md` —
+9 exact / 14 partial / 7 failed out of 30 representative Feynman
+equations. The doc walks each of the 7 failures with a hypothesis:
+
+- 3 of 7 are *certain tessera-fault* (vocabulary gap: missing sin/cos)
+- 2 of 7 are *probable tessera-fault* (4-variable inverse products;
+  search-budget + const-opt bound)
+- 1 of 7 is *constant-opt bound* (compound exponential)
+- 1 of 7 is *probable inherent SR-class limit* (9-variable Newton
+  gravity; needs AI-Feynman-style separability detection)
+
+**Six hypotheses to test**, status-flagged:
+
+1. ○ PLANNED §4.1: add `sin`, `cos` primitives (~30 LOC, knocks out 3
+   trig failures by construction)
+2. ? RESEARCH §4.2: structural-template mutations (sum-of-squares,
+   inverse-product, exponential-decay templates)
+3. ? RESEARCH §4.3: separability detection (AI-Feynman 2020 style)
+4. ○ PLANNED §4.4: jax.grad const-opt — already promoted in
+   `planned/roadmap.md` §1.3
+5. ? RESEARCH §4.5: full Feynman 100 benchmark
+6. ? RESEARCH §4.6: SRBench competition submission
+
+**Honest expectations / falsification criteria** documented:
+- Optimistic: 16 exact / 12 partial / 2 fail (matches PySR at modest
+  budget)
+- Modest: 13 exact / 14 partial / 3 fail (competitive)
+- Pessimistic: 11 exact / 12 partial / 7 fail (hypotheses didn't
+  move the needle → evidence that failures are inherent GP-class
+  limits, not tessera-fault)
+
+The pessimistic outcome is the MOST informative — it would falsify
+the "tessera-fault is fixable" framing and redirect effort toward
+neural-symbolic hybrids or pure-AI-Feynman approaches.
+
+**Connection to the high-dim SR direction** spelled out in §6: the
+two research notes are complementary. Low-dim/physics + high-dim/CV
+are two distinct competency claims; doing both gives tessera a
+stronger position than either alone.
+
+This doc is the second to follow the lifecycle process — written
+as RESEARCH, with sub-items flagged either ○ PLANNED (§4.1, §4.4) or
+? RESEARCH (others). §4.1 is the suggested next promotion.
+
 ### Added (doc lifecycle convention + research→planned promotion of two SR upgrades)
 
 **Process doc:** new `docs/process.md` codifies the four-stage lifecycle
