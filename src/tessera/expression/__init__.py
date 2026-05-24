@@ -61,6 +61,10 @@ from .axes import (
     Invariance, Axis, TypedVar,
     check_compatibility, OperatorAxisRule, OPERATOR_RULES,
 )
+from .jit import (
+    compile_tree, evaluate_jit, is_pure_pointwise,
+    clear_jit_cache, jit_cache_size,
+)
 
 __all__ = [
     # measure
@@ -77,6 +81,9 @@ __all__ = [
     "BIN_OPS", "UN_OPS", "BIN_OP_FNS", "UN_OP_FNS",
     "complexity", "depth", "used_features", "iter_subtrees", "replace_at", "evaluate",
     "simplify", "collect_const_values", "set_const_values",
+    # jit
+    "compile_tree", "evaluate_jit", "is_pure_pointwise",
+    "clear_jit_cache", "jit_cache_size",
     # mutation
     "MAX_DEPTH", "MAX_COMPLEXITY", "MAX_CONST_MAGNITUDE",
     "validate_tree",

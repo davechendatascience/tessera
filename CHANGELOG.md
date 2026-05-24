@@ -6,6 +6,42 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (GPU backend — Tier 2: jit-compile pointwise trees)
+- **`tessera.expression.jit`** module — JAX jit-compilation of
+  pure-pointwise Expr trees:
+  - `compile_tree(tree, var_names) -> callable`: builds a pure Python
+    function from the tree, wraps with `jax.jit`. First call compiles
+    (~100ms); subsequent calls run from XLA (μs-per-call).
+  - `evaluate_jit(tree, env) -> jax_array`: convenience that picks the
+    var-name order from `sorted(env.keys())` and invokes the compiled
+    function. The cache-key uses this canonical order so repeated calls
+    with the same env keys hit the cache.
+  - `is_pure_pointwise(node)`: detects whether a tree can be jit-compiled.
+    Trees containing `FunctionalOp` / `FunctionalOp2D` must use
+    `evaluate()` (Tier 1 JAX path); they can't be cleanly jitted because
+    `Measure.apply` has Python-level kernel-materialise dispatch.
+  - `clear_jit_cache()`, `jit_cache_size()`: manage the module-level
+    cache of compiled trees.
+- **11 new tests** in `tests/test_jax_backend_tier2.py`: cache behavior,
+  output correctness vs `evaluate()`, indicator + transcendental ops,
+  ValueError on FunctionalOp trees, and a speedup smoke test.
+- **Observed perf**: on CPU JAX (where this was developed), a
+  moderate-complexity pointwise tree gets **~13× speedup** of
+  `evaluate_jit` over eager `evaluate` at N=5000. On GPU JAX we expect
+  50-100× because XLA can fuse the entire pointwise pipeline into one
+  kernel.
+
+**Full test count: 435 passing** (424 + 11 Tier 2). No regressions.
+
+**What Tier 2 does NOT do:**
+- Mixed trees (containing `FunctionalOp`) can't be jit-compiled — they
+  go through the Tier 1 `evaluate()` JAX path (slower but correct).
+- Per-call compilation amortizes across many evaluations of the same
+  tree (e.g. inside `optimize_constants`). It doesn't help if every
+  candidate is a different topology — that's Tier 3's batched-population
+  approach.
+- No `jax.grad`-based const-opt yet — still scipy Nelder-Mead.
+
 ### Added (GPU backend — Tier 1: end-to-end `evaluate` on JAX arrays)
 - **`tessera.backend.array_module(x)`** — backend-polymorphic dispatch
   helper. Returns `jax.numpy` if `x` is a JAX array, else `numpy`. Used
