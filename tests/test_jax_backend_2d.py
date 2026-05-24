@@ -137,3 +137,74 @@ def test_evaluate_pointwise_plus_2d_on_jax_env():
     Y_jax = evaluate(tree, {"U": jnp.asarray(U_np)})
     assert type(Y_jax).__module__.startswith("jax")
     np.testing.assert_allclose(np.asarray(Y_jax), Y_np, rtol=1e-3, atol=1e-4)
+
+
+# ---------------- compile_image_predictor (Tier 3-D batched vmap) ----------------
+
+def test_compile_image_predictor_basic():
+    """Compiled per-sample fn applied to a batch of images returns [N]
+    mean-pooled scalars matching the per-image loop."""
+    from tessera.expression.tree import UnOp
+    from tessera.expression import compile_image_predictor, clear_image_predictor_cache
+
+    m = measure_2d_laplacian_5pt()
+    tree = UnOp("abs", FunctionalOp2D(m, Var("image")))
+
+    rng = np.random.default_rng(0)
+    N, H, W = 20, 14, 14
+    images = rng.standard_normal((N, H, W)).astype(np.float32)
+
+    # Reference: per-image Python loop with mean-pool
+    def loop_predict(tree, X):
+        preds = np.zeros(len(X))
+        for i, img in enumerate(X):
+            out = np.asarray(evaluate(tree, {"image": img}), dtype=np.float64)
+            mask = np.isfinite(out)
+            preds[i] = out[mask].mean() if mask.any() else float("nan")
+        return preds
+    pred_loop = loop_predict(tree, images)
+
+    # jit+vmap batched
+    clear_image_predictor_cache()
+    fn = compile_image_predictor(tree, batch_var="image", reduce="mean")
+    pred_jit = np.asarray(fn(jnp.asarray(images)))
+
+    np.testing.assert_allclose(pred_jit, pred_loop, rtol=1e-3, atol=1e-4)
+
+
+def test_compile_image_predictor_caches():
+    from tessera.expression.tree import UnOp
+    from tessera.expression import (
+        compile_image_predictor, clear_image_predictor_cache,
+        image_predictor_cache_size,
+    )
+
+    clear_image_predictor_cache()
+    assert image_predictor_cache_size() == 0
+
+    m = measure_2d_laplacian_5pt()
+    tree = UnOp("abs", FunctionalOp2D(m, Var("image")))
+    fn1 = compile_image_predictor(tree)
+    fn2 = compile_image_predictor(tree)
+    assert fn1 is fn2
+    assert image_predictor_cache_size() == 1
+
+
+def test_compile_image_predictor_reduce_modes():
+    """All reduce= modes return finite scalars on a clean input."""
+    from tessera.expression.tree import UnOp
+    from tessera.expression import compile_image_predictor, clear_image_predictor_cache
+
+    m = measure_2d_laplacian_5pt()
+    tree = UnOp("abs", FunctionalOp2D(m, Var("image")))
+
+    rng = np.random.default_rng(1)
+    images = rng.standard_normal((5, 10, 10)).astype(np.float32)
+    images_jax = jnp.asarray(images)
+
+    for reduce in ["mean", "max", "sum"]:
+        clear_image_predictor_cache()
+        fn = compile_image_predictor(tree, reduce=reduce)
+        out = np.asarray(fn(images_jax))
+        assert out.shape == (5,), f"{reduce}: shape {out.shape}"
+        assert np.all(np.isfinite(out)), f"{reduce}: non-finite output"

@@ -152,6 +152,96 @@ def evaluate_jit(tree: Node, env: dict):
     return fn(args)
 
 
+_IMG_PREDICTOR_CACHE: dict = {}
+
+
+def compile_image_predictor(tree: Node, batch_var: str = "image",
+                             reduce: str = "mean") -> Callable:
+    """Compile a tree → jit+vmap'd per-sample predictor.
+
+    Use case: the tree operates on ONE sample (e.g. a 2D image of shape
+    [H, W]), and you want to evaluate it efficiently on a batch of N
+    samples (shape [N, H, W]). Returns a callable
+    `f(image_batch) -> [N] jax_array` that:
+      1. vmaps the tree-evaluation over the leading (sample) axis
+      2. reduces each sample's per-pixel output to a scalar
+         (NaN-safe mean / max / sum)
+      3. jits the whole thing into one XLA program
+
+    Cached: calling with the same (tree, batch_var, reduce) returns the
+    same compiled function.
+
+    Parameters
+    ----------
+    tree : Node
+        Any tree (can include FunctionalOp, FunctionalOp2D — these go
+        through the Tier 1 JAX path inside the jit trace).
+    batch_var : str
+        Name of the var that holds the per-sample input (default "image").
+        Other Vars in the tree are unsupported in this initial version.
+    reduce : {"mean", "max", "sum", "none"}
+        How to collapse the per-sample output to a scalar. "mean" is
+        NaN-safe (zero-mask + count). "none" returns the raw per-sample
+        output unchanged.
+
+    Returns
+    -------
+    Callable
+        `f(batch: jax_array of shape [N, ...]) -> [N] jax_array`.
+        First call compiles (slow); later calls run from XLA (μs).
+    """
+    import jax
+    import jax.numpy as jnp
+
+    # Top-level evaluate is imported lazily to avoid an import cycle.
+    from .tree import evaluate as _evaluate_tree
+
+    key = (str(tree), batch_var, reduce)
+    if key in _IMG_PREDICTOR_CACHE:
+        return _IMG_PREDICTOR_CACHE[key]
+
+    def _per_sample(sample):
+        # `sample` is a single example shape [H, W] (or [H,] for 1-D, etc.)
+        env = {batch_var: sample}
+        out = _evaluate_tree(tree, env)
+        out = jnp.asarray(out)
+        if reduce == "none":
+            return out
+        if out.ndim == 0:
+            return out
+        if reduce == "mean":
+            mask = jnp.isfinite(out)
+            n_valid = mask.sum()
+            safe = jnp.where(mask, out, jnp.zeros_like(out))
+            return jnp.where(n_valid > 0,
+                             safe.sum() / jnp.maximum(n_valid, 1),
+                             jnp.nan)
+        if reduce == "max":
+            mask = jnp.isfinite(out)
+            safe = jnp.where(mask, out, -jnp.inf)
+            val = safe.max()
+            return jnp.where(mask.any(), val, jnp.nan)
+        if reduce == "sum":
+            mask = jnp.isfinite(out)
+            safe = jnp.where(mask, out, jnp.zeros_like(out))
+            return jnp.where(mask.any(), safe.sum(), jnp.nan)
+        raise ValueError(f"unknown reduce={reduce!r}")
+
+    batched = jax.vmap(_per_sample)
+    jitted = jax.jit(batched)
+    _IMG_PREDICTOR_CACHE[key] = jitted
+    return jitted
+
+
+def clear_image_predictor_cache() -> None:
+    """Drop all compiled image-predictor entries from the module-level cache."""
+    _IMG_PREDICTOR_CACHE.clear()
+
+
+def image_predictor_cache_size() -> int:
+    return len(_IMG_PREDICTOR_CACHE)
+
+
 def clear_jit_cache() -> None:
     """Drop all compiled-tree entries from the module-level cache.
 
@@ -168,6 +258,8 @@ def jit_cache_size() -> int:
 
 __all__ = [
     "compile_tree", "evaluate_jit",
+    "compile_image_predictor",
     "is_pure_pointwise",
     "clear_jit_cache", "jit_cache_size",
+    "clear_image_predictor_cache", "image_predictor_cache_size",
 ]

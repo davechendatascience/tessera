@@ -63,7 +63,9 @@ from .axes import (
 )
 from .jit import (
     compile_tree, evaluate_jit, is_pure_pointwise,
+    compile_image_predictor,
     clear_jit_cache, jit_cache_size,
+    clear_image_predictor_cache, image_predictor_cache_size,
 )
 from .batched import (
     topology_key, extract_constants, n_constants,
@@ -89,7 +91,9 @@ __all__ = [
     "simplify", "collect_const_values", "set_const_values",
     # jit
     "compile_tree", "evaluate_jit", "is_pure_pointwise",
+    "compile_image_predictor",
     "clear_jit_cache", "jit_cache_size",
+    "clear_image_predictor_cache", "image_predictor_cache_size",
     # batched (Tier 3)
     "topology_key", "extract_constants", "n_constants",
     "compile_topology", "evaluate_population", "evaluate_population_stacked",
