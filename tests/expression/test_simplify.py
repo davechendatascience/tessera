@@ -3,9 +3,13 @@ import numpy as np
 import pytest
 
 from tessera.expression import (
-    Var, Const, BinOp, UnOp, FunctionalOp,
+    Var, Const, BinOp, UnOp, FunctionalOp, FunctionalOp2D,
     simplify, evaluate, complexity,
-    LinearFunctional, measure_ema,
+    LinearFunctional, SeparableBilinear, Volterra2,
+    measure_ema, measure_diff, measure_lag,
+)
+from tessera.expression.measure_2d import (
+    measure_2d_laplacian_5pt, measure_2d_atomic, measure_2d_separable,
 )
 
 
@@ -157,15 +161,26 @@ def test_simplification_preserves_evaluation():
 # ---------------- Tree-with-FunctionalOp must recurse but not fold ----------------
 
 def test_simplify_recurses_into_functional_args():
-    """A FunctionalOp's child subtree should be simplified, but the
-    FunctionalOp itself is preserved (no folding through measures)."""
-    inner = BinOp("sub", Var("x"), Var("x"))   # → 0
+    """A FunctionalOp's child subtree should be simplified. For inputs
+    that simplify to Var, the FunctionalOp is preserved; for inputs
+    that simplify to Const, the new const-fold collapses the whole
+    FunctionalOp (see test_linear_functional_of_const_folds for the
+    fold behaviour)."""
+    # Var-preserving case: inner simplifies to Var, FunctionalOp stays.
+    inner = BinOp("mul", Var("x"), Const(1.0))   # → x
     func = LinearFunctional(measure=measure_ema(halflife=24))
     tree = FunctionalOp(func, (inner,))
     simp = simplify(tree)
     assert isinstance(simp, FunctionalOp)
-    assert simp.args == (Const(0.0),)
+    assert simp.args == (Var("x"),)
     assert simp.functional is func
+
+    # Const-folding case: inner simplifies to Const, FunctionalOp folds.
+    inner_zero = BinOp("sub", Var("y"), Var("y"))   # → 0
+    tree_zero = FunctionalOp(func, (inner_zero,))
+    simp_zero = simplify(tree_zero)
+    # LinearFunctional(ema)(0) = 0 * sum(ema_kernel) = 0
+    assert simp_zero == Const(0.0)
 
 
 # ---------------- Idempotence ----------------
@@ -185,3 +200,137 @@ def test_simplify_is_idempotent():
         once = simplify(t)
         twice = simplify(once)
         assert once == twice, f"simplify not idempotent for {t}: {once} vs {twice}"
+
+
+# ---------------- X/X → 1 fold ----------------
+
+def test_x_div_x_folds_to_one():
+    """X / X → 1 (the safe-divide convention; X=0 case gives 0 in actual
+    evaluation, but the simplifier picks the algebraic identity)."""
+    assert simplify(BinOp("div", Var("x"), Var("x"))) == Const(1.0)
+    # Larger expr: image / image → 1 → can be folded by outer ops
+    tree = BinOp("add", Const(2.0), BinOp("div", Var("image"), Var("image")))
+    assert simplify(tree) == Const(3.0)
+
+
+# ---------------- FunctionalOp(Const) const-folds ----------------
+
+def test_linear_functional_of_const_folds():
+    """LinearFunctional(μ)(Const c) = c · Σκ. Verified against
+    eval(tree) on a single time step."""
+    m = measure_ema(halflife=4, support_max=20)
+    kernel_sum = float(m.to_kernel().sum())
+    expected = 3.0 * kernel_sum
+    tree = FunctionalOp(LinearFunctional(measure=m), (Const(3.0),))
+    folded = simplify(tree)
+    assert isinstance(folded, Const)
+    assert abs(folded.value - expected) < 1e-9
+
+
+def test_linear_functional_of_const_zero_folds_to_zero():
+    m = measure_diff(1)
+    # Const(0): result is 0
+    tree = FunctionalOp(LinearFunctional(measure=m), (Const(0.0),))
+    assert simplify(tree) == Const(0.0)
+
+
+def test_volterra2_of_const_folds():
+    """Volterra2(μ_a, μ_b)(Const c) = c² · Σκ_a · Σκ_b."""
+    m_a = measure_diff(1)
+    m_b = measure_ema(halflife=4, support_max=20)
+    sa = float(m_a.to_kernel().sum())
+    sb = float(m_b.to_kernel().sum())
+    expected = (2.5 ** 2) * sa * sb
+    tree = FunctionalOp(Volterra2(measure_a=m_a, measure_b=m_b), (Const(2.5),))
+    folded = simplify(tree)
+    assert isinstance(folded, Const)
+    assert abs(folded.value - expected) < 1e-9
+
+
+def test_separable_bilinear_of_two_consts_folds():
+    """SeparableBilinear(μ_a, μ_b)(Const c_a, Const c_b)
+       = c_a · Σκ_a · c_b · Σκ_b."""
+    m_a = measure_diff(1)
+    m_b = measure_lag(3)
+    sa = float(m_a.to_kernel().sum())   # diff sums to 0
+    sb = float(m_b.to_kernel().sum())   # lag sums to 1
+    expected = 1.5 * sa * 2.0 * sb
+    tree = FunctionalOp(
+        SeparableBilinear(measure_a=m_a, measure_b=m_b),
+        (Const(1.5), Const(2.0)),
+    )
+    folded = simplify(tree)
+    assert isinstance(folded, Const)
+    assert abs(folded.value - expected) < 1e-9
+
+
+def test_separable_bilinear_of_var_and_const_does_not_fold():
+    """SB needs BOTH args constant; one Var means no fold."""
+    m = measure_ema(halflife=4, support_max=20)
+    tree = FunctionalOp(
+        SeparableBilinear(measure_a=m, measure_b=m),
+        (Var("x"), Const(2.0)),
+    )
+    folded = simplify(tree)
+    # No fold; structure unchanged
+    assert isinstance(folded, FunctionalOp)
+
+
+# ---------------- FunctionalOp2D(Const) const-folds ----------------
+
+def test_2d_functional_of_const_folds_atomic_only():
+    """Measure2D with atoms only, applied to Const c, = c · sum(atom_weights)."""
+    m = measure_2d_atomic([(0.5, 0, 0), (-0.3, 1, 0), (0.2, 0, 1)])
+    total = 0.5 - 0.3 + 0.2  # = 0.4
+    expected = 7.0 * total
+    tree = FunctionalOp2D(m, Const(7.0))
+    folded = simplify(tree)
+    assert isinstance(folded, Const)
+    assert abs(folded.value - expected) < 1e-9
+
+
+def test_2d_laplacian_of_const_folds_to_zero():
+    """Laplacian-5pt sums to zero → laplacian(c) = 0."""
+    m = measure_2d_laplacian_5pt()
+    tree = FunctionalOp2D(m, Const(42.0))
+    folded = simplify(tree)
+    assert isinstance(folded, Const)
+    assert abs(folded.value) < 1e-9
+
+
+def test_2d_separable_of_const_folds():
+    """Measure2D with separable density, applied to Const c, =
+    c · Σκ_t · Σκ_x."""
+    m_t = measure_ema(halflife=2, support_max=10)
+    m_x = measure_lag(1)   # sums to 1
+    m_2d = measure_2d_separable(m_t, m_x)
+    expected = 4.0 * float(m_t.to_kernel().sum()) * float(m_x.to_kernel().sum())
+    tree = FunctionalOp2D(m_2d, Const(4.0))
+    folded = simplify(tree)
+    assert isinstance(folded, Const)
+    assert abs(folded.value - expected) < 1e-9
+
+
+def test_2d_functional_of_var_does_not_fold():
+    """Only Const inputs trigger the fold; Var inputs leave structure intact."""
+    m = measure_2d_laplacian_5pt()
+    tree = FunctionalOp2D(m, Var("image"))
+    folded = simplify(tree)
+    assert isinstance(folded, FunctionalOp2D)
+
+
+# ---------------- Composed: const-fold lets dead branches die ----------------
+
+def test_dead_functional_branch_simplifies_away():
+    """The MNIST-diagnostic scenario: an M2D applied to a constant inside
+    a larger expression. After the const-fold, parsimony can prune it."""
+    m = measure_2d_laplacian_5pt()
+    # `3*image - M2D[laplacian](0.04)` where the M2D(const) is a dead branch
+    dead_branch = FunctionalOp2D(m, Const(0.04))   # → Const(0) (Laplacian sums to 0)
+    tree = BinOp("sub",
+                 BinOp("mul", Const(3.0), Var("image")),
+                 dead_branch)
+    folded = simplify(tree)
+    # The subtract-zero should also fold (existing identity)
+    # Result: 3 * image  → cx=3
+    assert complexity(folded) <= 5   # was 9-12 with dead branch attached

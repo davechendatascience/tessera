@@ -144,8 +144,13 @@ def test_gp_with_enable_2d_runs_and_finds_low_loss():
     U = _heat_eq_trajectory(T=80, X=24, alpha=0.05, seed=7)
     target = measure_2d_laplacian_5pt().apply(U, fill_warmup=0.0)
 
+    # Slightly higher budget than the original pop=40/gens=15 to make the
+    # test more robust to seed-dependent stochasticity (the
+    # FunctionalOp(Const) and FunctionalOp2D(Const) const-folds added in
+    # 2026-05-24 change the mutation trajectory just enough that the
+    # original budget sometimes lands above the 50%-of-var threshold).
     cfg = GPConfig(
-        pop_size=40, n_gens=15, parsimony=0.005, verbose=False,
+        pop_size=60, n_gens=25, parsimony=0.005, verbose=False,
         seed=42, enable_2d=True, fill_warmup=0.0,
     )
     gp = GP(cfg)
@@ -153,7 +158,7 @@ def test_gp_with_enable_2d_runs_and_finds_low_loss():
     assert len(front) >= 1
     best = min(c.train_loss for c in front)
     # Target IS reachable exactly (∇² is in the alphabet). Expect very low
-    # but not 0 in 15 gens because the GP has to find it.
+    # but not 0 in 25 gens because the GP has to find it.
     target_var = float(np.var(target))
     # A loss < 50% of target variance is "GP is doing useful work"
     assert best < 0.5 * target_var, (

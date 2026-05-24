@@ -110,6 +110,15 @@ def simplify(node: Node) -> Node:
                 return Const(0.0)
             if _is_const_value(b, 1.0):
                 return a
+            # X / X → 1. This is the safe-divide convention (a/0 → 0 means
+            # this isn't true at a=0); but the resulting Const(1.0) only
+            # affects downstream computation where Var "X" appears, and at
+            # the algebraic identity X/X=1 holds almost everywhere. The
+            # MNIST diagnostic showed `image/image` appearing in trees
+            # where the GP intended to use a non-trivial expression but
+            # mutation produced the trivial identity.
+            if a == b:
+                return Const(1.0)
         # min/max with equal args
         if op in ("min", "max") and a == b:
             return a
@@ -139,9 +148,53 @@ def simplify(node: Node) -> Node:
 
     if isinstance(node, FunctionalOp):
         new_args = tuple(simplify(arg) for arg in node.args)
-        return FunctionalOp(node.functional, new_args)
+        # Const-input folds: applying a measure-based functional to a
+        # constant series yields a constant series.
+        #
+        # For LinearFunctional(μ)(Const c):
+        #   (μ · c)(t) = Σ_k κ[k] · c = c · Σ_k κ[k]   (post-warmup)
+        #
+        # For SeparableBilinear(μ_a, μ_b)(Const c_a, Const c_b):
+        #   = (μ_a · c_a)(t) · (μ_b · c_b)(t)
+        #   = (c_a · Σ κ_a) · (c_b · Σ κ_b)
+        #
+        # For Volterra2(μ_a, μ_b)(Const c):
+        #   = (μ_a · c)(t) · (μ_b · c)(t)
+        #   = c² · Σ κ_a · Σ κ_b
+        #
+        # The MNIST diagnostic showed several discovered features
+        # containing FunctionalOp applied to a constant (a "dead branch"
+        # that contributed nothing while inflating tree complexity).
+        # Folding these to Const lets parsimony pressure prune them.
+        from ..functional import LinearFunctional, SeparableBilinear, Volterra2
+        from ..measure import Measure
+        f = node.functional
+        if isinstance(f, LinearFunctional) and isinstance(new_args[0], Const):
+            kernel_sum = float(f.measure.to_kernel().sum())
+            return Const(new_args[0].value * kernel_sum)
+        if isinstance(f, SeparableBilinear) \
+                and isinstance(new_args[0], Const) \
+                and isinstance(new_args[1], Const):
+            sum_a = float(f.measure_a.to_kernel().sum())
+            sum_b = float(f.measure_b.to_kernel().sum())
+            return Const(new_args[0].value * sum_a * new_args[1].value * sum_b)
+        if isinstance(f, Volterra2) and isinstance(new_args[0], Const):
+            sum_a = float(f.measure_a.to_kernel().sum())
+            sum_b = float(f.measure_b.to_kernel().sum())
+            return Const((new_args[0].value ** 2) * sum_a * sum_b)
+        return FunctionalOp(f, new_args)
 
     if isinstance(node, FunctionalOp2D):
-        return FunctionalOp2D(node.measure_2d, simplify(node.arg))
+        new_arg = simplify(node.arg)
+        if isinstance(new_arg, Const):
+            # M2D applied to a constant scalar field: result is constant
+            # equal to c · (Σ atomic_weights + Σ sep_t · Σ sep_x).
+            m = node.measure_2d
+            total = sum(a.weight for a in m.atoms)
+            if m.has_density:
+                total += (float(m.sep_t.to_kernel().sum())
+                          * float(m.sep_x.to_kernel().sum()))
+            return Const(new_arg.value * total)
+        return FunctionalOp2D(node.measure_2d, new_arg)
 
     raise TypeError(type(node))
