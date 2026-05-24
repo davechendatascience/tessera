@@ -58,7 +58,7 @@ from .base import Candidate
 from .losses import mse_loss
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
-from .const_opt import optimize_constants
+from .const_opt import optimize_constants, optimize_constants_jax
 from .hall_of_fame import HallOfFame
 
 # Tier 3 imports: optional; only used when cfg.use_jax_population_eval=True.
@@ -136,12 +136,31 @@ class GPConfig:
     of PySR's `optimize_constants` inner loop. Set 0 to disable."""
 
     optimize_constants_method: str = "Nelder-Mead"
-    """Scipy minimiser. Defaults to Nelder-Mead because the most
-    interesting tessera loss functions (PnL+flip_rate) are non-smooth
-    due to `sign`/`diff(sign)` discontinuities; gradient-based methods
-    struggle. For smooth losses, 'BFGS' converges faster."""
+    """Optimiser for the polish step. Options:
+
+    Scipy methods (always available):
+      'Nelder-Mead'   — default; gradient-free; robust to non-smooth
+                        losses (PnL+flip_rate etc.).
+      'BFGS'          — finite-difference gradient; faster on smooth.
+      'Powell'        — gradient-free alternative.
+
+    JAX method (requires jax installed + use_jax_population_eval=True):
+      'jax_adam'      — jax.grad + hand-rolled Adam. ~10-50× per-tree
+                        vs Nelder-Mead on the GPU. Only applicable to
+                        pure-pointwise trees + mse_loss; mixed trees
+                        and non-MSE losses silently fall back to the
+                        configured scipy method.
+
+    Per `docs/planned/roadmap.md` §1.3."""
 
     optimize_constants_maxiter: int = 50
+    """Steps. For scipy methods this is the maxiter passed to
+    scipy.optimize.minimize. For 'jax_adam' this is the Adam step
+    count; default 50 works for most MSE losses."""
+
+    optimize_constants_jax_lr: float = 1e-2
+    """Adam learning rate for the 'jax_adam' optimiser (ignored
+    otherwise). Tune up if losses plateau; down if they diverge."""
 
     # Algebraic simplification
     simplify_trees: bool = True
@@ -596,14 +615,44 @@ class GP:
         if not front:
             return pop
         improved: dict[int, Candidate] = {}
+
+        # Dispatch decision: use jax_adam path when applicable.
+        # Applicability: (1) method explicitly set to 'jax_adam',
+        # (2) loss is mse, (3) JAX env is populated (which requires
+        # use_jax_population_eval=True and jax installed).
+        use_jax_path = (
+            self.cfg.optimize_constants_method == "jax_adam"
+            and self.loss_fn is mse_loss
+            and self._env_jax is not None
+            and self._y_true_jax is not None
+        )
+
         for c in front:
-            new_tree, new_loss = optimize_constants(
-                c.tree, env, y_true, self.loss_fn, self.cache,
-                fill_warmup=self.cfg.fill_warmup,
-                min_valid_frac=self.cfg.min_valid_frac,
-                method=self.cfg.optimize_constants_method,
-                maxiter=self.cfg.optimize_constants_maxiter,
-            )
+            # Tree-level applicability: jax_adam requires pure-pointwise.
+            if use_jax_path and is_pure_pointwise is not None \
+                    and is_pure_pointwise(c.tree):
+                new_tree, new_loss = optimize_constants_jax(
+                    c.tree, self._env_jax, self._y_true_jax,
+                    n_steps=self.cfg.optimize_constants_maxiter,
+                    learning_rate=self.cfg.optimize_constants_jax_lr,
+                    min_valid_frac=self.cfg.min_valid_frac,
+                )
+            else:
+                # Scipy fallback: applies when (a) jax_adam not requested,
+                # (b) loss isn't mse, (c) tree contains FunctionalOp, or
+                # (d) JAX env not populated.
+                method = self.cfg.optimize_constants_method
+                if method == "jax_adam":
+                    # User requested jax_adam but conditions not met;
+                    # fall back to a scipy default.
+                    method = "Nelder-Mead"
+                new_tree, new_loss = optimize_constants(
+                    c.tree, env, y_true, self.loss_fn, self.cache,
+                    fill_warmup=self.cfg.fill_warmup,
+                    min_valid_frac=self.cfg.min_valid_frac,
+                    method=method,
+                    maxiter=self.cfg.optimize_constants_maxiter,
+                )
             if new_loss < c.train_loss - 1e-12:
                 cx = complexity(new_tree)
                 fitness = new_loss + self.cfg.parsimony * cx

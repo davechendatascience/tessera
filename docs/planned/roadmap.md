@@ -42,17 +42,6 @@ PySR's mutation operators have weights that change over generations. Early: more
 
 **Effort:** ~30 LOC. Multiply the weights by a per-gen schedule.
 
-### 1.3 `jax.grad` constant optimisation ○ PLANNED
-
-`optimize_constants` is currently scipy's Nelder-Mead, called serially per tree. Replacing with `jax.grad + optax.adam` would:
-
-- Speed: ~10-50× per-tree on GPU (Adam vs derivative-free Nelder-Mead)
-- Batchability: vmap const-opt across the population, fusing with the Tier-3 batched evaluation
-
-This is the largest remaining GP wall-clock improvement after the Tier-1/2/3 GPU port.
-
-**Effort:** ~half day, contained. Needs to handle the smooth/non-smooth loss distinction: PnL+flip is non-smooth so Adam may not help there; for MSE it's a clear win.
-
 ## 2. Scalable upgrades from the high-dim SR research note
 
 These items were promoted from `docs/research/high_dim_symbolic_regression.md` §5 on 2026-05-24. The research doc surveys why high-dim SR is hard and proposes five scalable directions; the two cheapest are promoted here to ship first.
@@ -129,6 +118,7 @@ Done items previously listed here have been moved to:
 
 | Item | Status | Where |
 |---|---|---|
+| `jax.grad` constant optimisation (`optimize_constants_jax`) | ✓ DONE | `tessera.search.const_opt`; GPConfig.optimize_constants_method='jax_adam' |
 | Trigonometric primitives (`sin`, `cos`) | ✓ DONE | `tessera.expression.tree.UN_OP_FNS`; from `docs/research/benchmark_score_improvement.md` §4.1 |
 | Hall of Fame (per-cx best-ever store) | ✓ DONE | `tessera.search.HallOfFame`; see `src/tessera/search/README.md` |
 | Algebraic simplifier | ✓ DONE | `tessera.expression.simplify` + `simplify_ac` |

@@ -6,6 +6,72 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (`jax.grad` constant optimisation — lifecycle ship #2)
+
+Per `docs/planned/roadmap.md` §1.3 (now in "Recently shipped"): the
+biggest remaining GP wall-clock win after the Tier-1/2/3 GPU port.
+Replaces scipy Nelder-Mead with jax.grad + hand-rolled Adam for the
+pure-pointwise + MSE case; mixed trees and non-MSE losses keep their
+scipy path.
+
+**Implementation: src/tessera/search/const_opt.py**
+- `optimize_constants_jax(tree, env_jax, y_true_jax, n_steps, lr, ...)`
+  Returns `(tree_with_optimised_consts, final_loss)`. Hand-rolled Adam
+  (no optax dependency — keeps tessera's hard-dep surface minimal).
+  Uses `tessera.expression.batched._build_parametric_fn` to construct
+  the consts→loss function so the jit graph is consistent with the
+  Tier-3 batched evaluator.
+
+**Implementation: src/tessera/search/gp.py**
+- `GPConfig.optimize_constants_method` now accepts `'jax_adam'` in
+  addition to the scipy methods. When selected AND loss is mse_loss
+  AND tree is pure-pointwise AND `use_jax_population_eval=True`, the
+  polish step dispatches to `optimize_constants_jax`. Otherwise falls
+  back to scipy.
+- `GPConfig.optimize_constants_jax_lr: float = 1e-2` — Adam learning
+  rate, configurable per-run.
+- `GPConfig.optimize_constants_maxiter` repurposed: for scipy, it's
+  the scipy maxiter; for `jax_adam`, it's the Adam step count.
+
+**Re-exported from `tessera.search`**: `optimize_constants_jax`.
+
+**Tests: tests/search/test_const_opt_jax.py (5 active + 1 documented skip)**
+- Linear-fit convergence: `(a*x + b)` with a=1,b=0 initial → a≈2,b≈3
+  after 200 Adam steps on `y = 2x + 3`
+- Correctness parity with scipy on a quadratic-fit problem (both
+  converge to <0.1 loss). Wall-clock NOT asserted — on CPU JAX the
+  one-time JIT compile dominates and scipy wins; the speedup shows
+  on GPU + warm cache. The smoke test documents this expected
+  behaviour.
+- End-to-end GP run with `optimize_constants_method='jax_adam'`
+  completes without errors and produces a Pareto front
+- Fallback path: when loss isn't mse, the JAX-path is skipped and
+  scipy is used (verified with a quartic loss)
+
+**Honest performance note (CPU JAX dev environment):**
+A single tree's first-time Adam call takes ~750ms because of the
+JIT compile; scipy Nelder-Mead on the same problem takes ~20ms.
+The win shows up:
+  (a) on GPU, where the compiled execution is much faster
+  (b) after warmup, where subsequent same-shape trees skip compile
+  (c) at scale, where the Tier-3-style vmap over the population
+      collapses K trees' const-opt into a single jit call (this is
+      a follow-up; the current implementation is per-tree)
+
+For the current MNIST run (K=10 features × ~30s each = 5-15min),
+the const-opt step is a meaningful fraction. After this ships +
+warm-cache, expect 2-5x wall-clock improvement on MNIST per feature
+discovery. On 100-equation Feynman benchmarks the speedup amortises
+across all polish calls.
+
+**Test count: 513 passing** (was 508; +5 active jax_adam tests).
+
+**Lifecycle close-out** (per `docs/process.md` stage 4):
+- `roadmap.md` §1.3 moved to "Recently shipped (pointers, not detail)"
+- TaskCreate #76 closed
+- No new `docs/shipped/X.md` doc — the CHANGELOG entry + tests +
+  inline docstrings explain why+how
+
 ### Added (trigonometric primitives `sin`, `cos`) — lifecycle ship #1
 
 First feature to follow the full lifecycle from `docs/process.md`:

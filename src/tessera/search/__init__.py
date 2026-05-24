@@ -36,7 +36,7 @@ from .losses import mse_loss, _prediction_is_valid
 from .losses_trading import pnl_loss_hard, pnl_loss_smooth
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
-from .const_opt import optimize_constants
+from .const_opt import optimize_constants, optimize_constants_jax
 from .hall_of_fame import HallOfFame
 from .bounds import mse_lower_bound, pareto_threshold
 from .gp import GP, GPConfig
@@ -48,7 +48,7 @@ __all__ = [
     "Candidate",
     "mse_loss", "_prediction_is_valid", "_evaluate_tree",
     "pnl_loss_hard", "pnl_loss_smooth",
-    "pareto_front", "optimize_constants",
+    "pareto_front", "optimize_constants", "optimize_constants_jax",
     "HallOfFame",
     "mse_lower_bound", "pareto_threshold",
     # Searchers
