@@ -6,6 +6,78 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: analytical Δloss for symbolic mutations)
+
+User asked: *"Is there a way to do the calculus of loss impact of
+incremental moves? Since these are all symbols. We can calculate the
+analytic impact we can save compute in some way to make it utterly
+O(1)? Is there any research on this? I would imagine Knuth would
+have something similar."*
+
+New `docs/research/analytical_delta_loss.md` (8 sections). Honest
+answer: **partial yes**, with three sharply-distinct regimes:
+
+**Regime A — Incremental partial eval** (well-known; Knuth's
+Dancing Links is the analog). When a mutation touches one subtree,
+only re-eval from that point upward. Cost: O(N · subtree_size).
+Tessera partially ships this via FunctionalCache.
+
+**Regime B — Sufficient-statistic precomputation** (the actually-
+tractable analytical case; Fast Multipole Method is the analog).
+For MSE: `Δloss = (2/N)·Σ residual·δ + (1/N)·Σ δ²`. If δ lives in
+a basis (polynomial monomials, fixed feature bank), precompute
+`M_k = Σ x^k` and `R_k = Σ residual·x^k` ONCE. Then any basis
+mutation evaluates in O(basis_size²) — **independent of N**.
+This is what gradient boosting (Friedman 2001) and SINDy/STLSQ
+(Brunton 2016) do; not yet ported to GP-style SR.
+
+**Regime C — Fully analytical Δloss for general mutations**.
+Impossible by Kolmogorov-uncomputability argument. The only
+truly-O(1) cases: const-leaf perturbations (with precomputed leaf
+evals), algebraic equivalences (Δloss=0), and identity rewrites.
+
+**Knuth connections:**
+- Dancing Links (TAOCP §7.2.2): incremental state for backtracking
+- Alpha-beta pruning (Knuth & Moore 1975): bound-based skipping, not
+  analytical Δloss, but right intuition
+- Fast Multipole Method (Greengard & Rokhlin 1987): outside Knuth
+  proper but in the spirit — O(N) where naive is O(N²) by
+  exploiting kernel structure
+
+**SR-specific gap:** no published GP-style SR system exploits
+Regime B for structural mutations. STLSQ/SINDy is closest but
+restricts to sparse linear-in-parameters. The combination
+(GP structural search + sufficient-statistic-based basis mutations)
+is a tessera-shaped research direction.
+
+**Four concrete next experiments**, ordered by implementation cost:
+
+| Item | Regime | Effort | Expected impact |
+|---|---|---|---|
+| §4.1 Residual-aware mutation bias | A+ | 1-2 days | Modest |
+| §4.2 Polynomial-basis sufficient stats | B | 3-5 days | Large for poly benchmarks |
+| §4.3 Per-node FunctionalCache + dirty flag | A | 2 days | Minor |
+| §4.4 Linear-in-parameters hybrid GP (SINDy-style) | B | 1 week | Large for physics |
+
+The cheapest test of the analytical-Δloss thread is §4.1: bias
+random_tree by the current residual's correlation pattern. Falls
+back gracefully to current uniform-random; clean A/B on Feynman.
+
+**Connection to existing notes (§7):**
+- `fit_as_perfect_info_game.md` §4: cost asymmetry (cheap mutation,
+  expensive eval) is exactly what Regime B partially addresses
+- `benchmark_difficulty_and_climb_then_simplify.md` §3.3:
+  "structural lookahead" was the same question; this note
+  RESOLVES that it's impossible for arbitrary mutations but
+  tractable for basis ones
+- `network_sr_and_budget_allocation.md` §4: Regime B
+  precomputation is an admissible heuristic for the B&B bound check
+
+**Honest non-claim:** the user's "utterly O(1) from symbols alone"
+goal is exactly Regime C, which is impossible in general. The
+achievable answer is Regimes A and B, both of which would
+meaningfully accelerate tessera if implemented.
+
 ### Added (non-monotone parsimony schedule — climb-then-simplify ship)
 
 Per `docs/planned/roadmap.md` §2.3 (now in "Recently shipped"). Tests
