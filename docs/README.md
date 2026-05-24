@@ -34,6 +34,7 @@ Inside any individual doc, items are flagged with:
 | See the measure-theory + perfect-info bridge | [`research/measure_theory_and_perfect_info.md`](research/measure_theory_and_perfect_info.md) |
 | Read about axis-aware SR / invariance | [`research/invariance_in_sr.md`](research/invariance_in_sr.md) |
 | See the GPU + CV scoping | [`research/gpu_and_cv_via_sr.md`](research/gpu_and_cv_via_sr.md) |
+| Understand the high-dim SR problem + tessera's research position | [`research/high_dim_symbolic_regression.md`](research/high_dim_symbolic_regression.md) |
 
 ## Organisational principles
 
