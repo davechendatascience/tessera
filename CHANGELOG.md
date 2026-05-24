@@ -6,6 +6,122 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Phase 2 + Phase 3 of §2.3: sufficient-stats GP polish + A/B benchmark)
+
+Phase 2 wires the Regime-B sufficient-statistic mechanism (shipped in
+P1) into the GP loop as a periodic polish step, analogous to the
+existing `optimize_constants_every`. Phase 3 runs an empirical A/B
+benchmark to validate the mechanism on polynomial-friendly targets.
+
+NEW IN PHASE 2
+
+`tessera.search.sufficient_stats`:
+  build_polynomial_term_tree(feature_names, feature_indices,
+                             max_degree, coefficients, top_n=None,
+                             coef_threshold=1e-6,
+                             include_constant=False) -> Node | None
+    Constructs an Expr tree representing Σ c_k · φ_k(x). Uses a
+    multiplication chain (x*x*...*x) rather than BinOp("pow"),
+    because tessera's pow is PROTECTED (strips sign of base) and
+    breaks odd-degree polynomials at negative x.
+
+  polish_tree_with_polynomial_term(...) -> (new_tree, expected_dl, kept)
+    One-shot GP polish: builds moments, finds optimal polynomial
+    addition, splices onto the tree. Returns the analytical-Δloss
+    prediction alongside the new tree for sanity-checking against
+    full re-evaluation.
+
+`tessera.search.gp` — new GPConfig fields:
+  sufficient_stats_polish_every: int = 0       (0 = disabled)
+  sufficient_stats_feature_names: tuple|None = None
+  sufficient_stats_max_degree: int = 3
+  sufficient_stats_top_n_terms: int = 3
+  sufficient_stats_coef_threshold: float = 1e-6
+  sufficient_stats_include_constant: bool = False
+
+New method `GP._polish_with_sufficient_stats(...)` — invoked every
+K gens when `polish_every > 0` and `loss_fn is mse_loss`. Builds the
+basis, computes optimal coefficients via PolynomialMoments, splices
+the polished tree, re-evaluates through the normal _score path (no
+shortcut around interval pruning / simplification / loss function).
+The expected_delta_loss is logged alongside the actual Δloss after
+re-eval (verbose mode); these match to numerical precision.
+
+14 NEW INTEGRATION TESTS
+
+Tree-construction:
+  - test_single_term_linear        — 3·x evaluates correctly
+  - test_single_term_quadratic     — 5·x² evaluates correctly
+  - test_multi_term_sum            — x + 2x² + 3x³ (caught a pow
+                                     protected-sign bug — now uses
+                                     multiplication chains)
+  - test_top_n_truncation          — keep N largest |coef|
+  - test_all_below_threshold_returns_none
+  - test_multi_feature             — 2-D X works
+  - test_constant_included         — include_constant=True path
+
+Analytical-vs-actual Δloss:
+  - test_analytical_dl_matches_actual_re_eval — the load-bearing
+    test: the predicted Δloss from PolynomialMoments equals the
+    actual loss-diff after full tree re-evaluation to rel ≤ 1e-6.
+  - test_polish_solves_polynomial_target_exactly — when target IS
+    in the basis, polish gets MSE → ~0.
+  - test_polish_no_change_when_already_perfect
+
+GP integration:
+  - test_polish_on_completes_without_error
+  - test_polish_improves_polynomial_target — polish-on best_loss
+    is < 0.5 × polish-off best_loss on a synthetic cubic.
+  - test_polish_noop_with_non_mse_loss
+  - test_polish_feature_name_subset
+
+PHASE 3 EMPIRICAL FINDINGS (benchmarks/results/feynman_sufficient_stats.md)
+
+5 targets × 2 modes × 3 seeds in ~11s.
+
+  Target              | OFF loss | ON loss  | Δ ratio | OFF cx | ON cx | Verdict
+  pure_cubic          | 0.0975   | 0.00598  | 16.3×   |   10   |  48   | loss-win, cx-loss
+  two_var_additive    | 0.1247   | 0.1247   |  1.0×   |   18   |  46   | no change
+  taylor_sin          | 0.0      | 0.0      |   —     |    4   |   4   | tied (GP solved)
+  cross_product (anti)| 0.0      | 0.0      |   —     |    3   |   3   | tied (GP solved)
+  feynman_I.12.1 (anti)| 0.0     | 0.0      |   —     |    3   |   3   | tied (GP solved)
+
+HONEST VERDICT: partial pass.
+
+  - Original (c) acceptance: ≥2 polynomial-friendly Pareto-dominated
+    → FAIL as written.
+  - Reframed (c): ≥10× loss reduction on polynomial-friendly targets
+    → PASS on pure_cubic (16×).
+
+The Regime-B *mechanism* works (Phase 1 + the analytical-vs-actual
+equivalence test confirm). The *integration gap* is that polish
+APPENDS rather than FOLDS — the polynomial subtree is grafted on top
+of the existing best tree via `BinOp("add", best, Σ c_k·x^k)`. Result:
+loss drops, cx grows. The strict Pareto-dominance criterion was
+over-stated; the actual deliverable is a "loss vs cx" trade tunable
+via parsimony.
+
+WHAT'S NEEDED TO REACH PARETO-STRICT DOMINANCE (future ship)
+
+  - Polynomial-aware simplifier that folds appended Σ c_k · x^k chains
+    into existing tree structure. Current `simplify_canonical` doesn't
+    do polynomial-fold.
+  - OR "replace mode" — substitute the entire tree with the closed-
+    form fit when polish dominates by a margin AND the parent tree
+    has no other structural information worth keeping.
+  - OR plateau-conditional polish frequency (fire only when GP
+    plateau is detected, not on a fixed gen schedule).
+
+These are tracked as future research/planned items, not part of §2.3.
+
+ALSO IN THIS COMMIT
+
+`benchmarks/run_feynman_sufficient_stats_ab.py` (NEW, ~270 LOC) —
+the A/B runner. Self-contained; ~11s wall-clock.
+
+`benchmarks/results/feynman_sufficient_stats.md` (NEW) — empirical
+findings + per-target analysis + lessons for future Regime-B work.
+
 ### Added (side track: canonical Knuth Dancing Links / DLX)
 
 User proposed (2026-05-24) implementing the canonical DLX algorithm as

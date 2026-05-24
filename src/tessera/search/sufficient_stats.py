@@ -1,5 +1,11 @@
 """Sufficient-statistic precomputation for analytical Δloss (Regime B).
 
+PHASE 2 (this revision): adds `mutate_add_polynomial_term` — builds the
+optimal additive polynomial term tree from a PolynomialMoments instance,
+to be used as a GP polish step.
+
+
+
 For MSE loss `L(f) = (1/N) Σ (f(x_i) - y_i)²`, an additive mutation
 `f' = f + δ` has Δloss decomposing as:
 
@@ -240,4 +246,184 @@ def _make_monomial(feature_idx: int, degree: int) -> BasisFn:
     return phi
 
 
-__all__ = ["PolynomialMoments", "monomial_basis", "BasisFn"]
+__all__ = [
+    "PolynomialMoments", "monomial_basis", "BasisFn",
+    "build_polynomial_term_tree", "polish_tree_with_polynomial_term",
+]
+
+
+# ----------------------------------------------------------------------
+# Phase 2 — tree construction for the GP polish step
+# ----------------------------------------------------------------------
+
+def build_polynomial_term_tree(
+    feature_names: list[str],
+    feature_indices: list[int],
+    max_degree: int,
+    coefficients: np.ndarray,
+    top_n: int | None = None,
+    coef_threshold: float = 1e-6,
+    include_constant: bool = False,
+):
+    """Construct an Expr tree representing Σ c_k · φ_k(x).
+
+    The basis-function ordering must match `monomial_basis(feature_indices,
+    max_degree, include_constant=include_constant)`. Imports tessera tree
+    types lazily so this module stays import-cheap and decoupled from
+    `tessera.expression.*` until actually used.
+
+    Parameters
+    ----------
+    feature_names : list of str
+        Full name list (env.keys() ordering).
+    feature_indices : list of int
+        Which features the basis covers (index into feature_names).
+    max_degree : int
+        Max exponent used in `monomial_basis`.
+    coefficients : (K,) ndarray
+        Coefficient vector in the basis. Typically the output of
+        `PolynomialMoments.optimal_coefficients()`.
+    top_n : int or None
+        Keep only the top-N coefficients by absolute magnitude. None =
+        keep all. Limits tree complexity blowup.
+    coef_threshold : float
+        Coefficients with |c| < threshold are skipped entirely (after
+        top-N filter). Avoids adding effectively-zero terms.
+    include_constant : bool
+        Must match the value used when constructing the basis.
+
+    Returns
+    -------
+    Node | None
+        A tessera Expr tree representing the sum, or None if every
+        coefficient was below threshold (degenerate "add nothing"
+        case).
+    """
+    # Lazy imports — sufficient_stats stays as a pure-numerics module
+    # at import time; tree construction is opt-in.
+    from tessera.expression.tree import Var, Const, BinOp
+
+    c = np.asarray(coefficients, dtype=np.float64).reshape(-1)
+    expected_K = (
+        (1 if include_constant else 0)
+        + len(feature_indices) * max_degree
+    )
+    if c.shape[0] != expected_K:
+        raise ValueError(
+            f"coefficient vector has K={c.shape[0]}, expected "
+            f"{expected_K} from (include_constant={include_constant}, "
+            f"{len(feature_indices)} features × {max_degree} degrees)"
+        )
+
+    # Build (basis_idx, exponent_tuple, name_or_None) list.
+    # exponent_tuple = (feature_idx, exponent); name = constant marker.
+    basis_meta = []
+    if include_constant:
+        basis_meta.append((None, None))
+    for d in feature_indices:
+        for k in range(1, max_degree + 1):
+            basis_meta.append((d, k))
+
+    # Pick which indices to include.
+    order = np.argsort(-np.abs(c))  # descending magnitude
+    if top_n is not None:
+        order = order[:top_n]
+    keep = [int(i) for i in order if abs(c[int(i)]) >= coef_threshold]
+    if not keep:
+        return None
+
+    # Sort by basis index so the resulting tree is canonical
+    # (deterministic across orderings of identical coefficients).
+    keep.sort()
+
+    def _term_node(coef: float, meta):
+        feat_idx, exponent = meta
+        coef_node = Const(value=float(coef))
+        if feat_idx is None:
+            # Constant term
+            return coef_node
+        var = Var(name=feature_names[feat_idx])
+        # Use multiplication chain (x*x*...*x) rather than BinOp("pow"),
+        # because the tessera "pow" op is PROTECTED — pow(|x|, k) — which
+        # strips the sign of the base and breaks odd-degree polynomials
+        # (e.g., x^3 at x=-1 would return +1, not -1). Multiplication is
+        # cheaper in complexity too.
+        power_node = var
+        for _ in range(exponent - 1):
+            power_node = BinOp(op="mul", a=power_node, b=var)
+        return BinOp(op="mul", a=coef_node, b=power_node)
+
+    nodes = [_term_node(float(c[i]), basis_meta[i]) for i in keep]
+    # Left-fold into a sum tree
+    result = nodes[0]
+    for n in nodes[1:]:
+        result = BinOp(op="add", a=result, b=n)
+    return result
+
+
+def polish_tree_with_polynomial_term(
+    tree,
+    predictions: np.ndarray,
+    X: np.ndarray,
+    y: np.ndarray,
+    feature_names: list[str],
+    feature_indices: list[int],
+    max_degree: int,
+    *,
+    top_n: int | None = 3,
+    coef_threshold: float = 1e-6,
+    include_constant: bool = False,
+    ridge: float = 1e-8,
+):
+    """One-shot GP polish: build moments, find optimal polynomial
+    addition, splice it onto the tree.
+
+    Returns
+    -------
+    (new_tree, expected_delta_loss, kept_terms) :
+        new_tree : Node or original tree if no term added.
+        expected_delta_loss : float — analytical prediction from
+                              PolynomialMoments.delta_loss for the
+                              top-N truncated coefficient vector.
+                              Useful as a sanity check vs full re-eval.
+        kept_terms : int — number of basis functions added (0 if no
+                    change).
+    """
+    from tessera.expression.tree import BinOp
+
+    basis = monomial_basis(
+        feature_indices, max_degree, include_constant=include_constant
+    )
+    moments = PolynomialMoments.from_basis(X, y, predictions, basis)
+    c_opt = moments.optimal_coefficients(ridge=ridge)
+
+    # Filter to top-N magnitude + threshold
+    abs_c = np.abs(c_opt)
+    order = np.argsort(-abs_c)
+    if top_n is not None:
+        order = order[:top_n]
+    keep_mask = np.zeros_like(c_opt)
+    for i in order:
+        if abs_c[int(i)] >= coef_threshold:
+            keep_mask[int(i)] = 1.0
+    c_truncated = c_opt * keep_mask
+    kept = int(keep_mask.sum())
+    if kept == 0:
+        return tree, 0.0, 0
+
+    expected_dl = moments.delta_loss(c_truncated)
+
+    addition = build_polynomial_term_tree(
+        feature_names=feature_names,
+        feature_indices=feature_indices,
+        max_degree=max_degree,
+        coefficients=c_truncated,
+        top_n=None,  # already truncated above
+        coef_threshold=coef_threshold,
+        include_constant=include_constant,
+    )
+    if addition is None:
+        return tree, 0.0, 0
+    new_tree = BinOp(op="add", a=tree, b=addition)
+    return new_tree, float(expected_dl), kept
+

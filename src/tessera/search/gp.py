@@ -215,6 +215,50 @@ class GPConfig:
     subset; JAX's own topology-keyed jit cache handles equivalent reuse.
     """
 
+    # Sufficient-statistic polynomial polish (Regime B, §2.3 Phase 2)
+    sufficient_stats_polish_every: int = 0
+    """Every K generations, augment the current best candidate with the
+    closed-form-optimal additive polynomial term computed via
+    PolynomialMoments (sufficient-statistic precomputation, O(K²)
+    Δloss independent of N). 0 = disabled (default).
+
+    The mechanism: at generation G, take the lowest-loss candidate,
+    evaluate predictions, build moments from the configured polynomial
+    basis (sufficient_stats_feature_names × max degree), find optimal
+    coefficients c* = -G⁻¹R in closed form, truncate to top-N by
+    magnitude, splice the resulting tree `best + Σ c_k · x^k` into the
+    population. The new candidate is re-evaluated through the normal
+    _score path so its (cx, loss) lands on the Pareto front honestly.
+
+    Only applicable when loss_fn is mse_loss; silently disables
+    otherwise. See `docs/research/analytical_delta_loss.md` §4.2 and
+    `docs/planned/roadmap.md` §2.3 for context.
+    """
+
+    sufficient_stats_feature_names: tuple[str, ...] | None = None
+    """Which env features participate in the polynomial basis. None =
+    use ALL feature_names passed to run(). Tuple-typed for dataclass
+    immutability."""
+
+    sufficient_stats_max_degree: int = 3
+    """Maximum exponent in the polynomial basis. 3 covers most
+    Feynman-style polynomial targets."""
+
+    sufficient_stats_top_n_terms: int = 3
+    """After computing optimal coefficients, keep the top-N by
+    absolute magnitude. Limits the per-polish tree-size blowup
+    (otherwise a full polynomial of D features × max_degree could
+    add D·max_degree nodes per polish step)."""
+
+    sufficient_stats_coef_threshold: float = 1e-6
+    """Coefficients with |c| < threshold are skipped entirely. Avoids
+    adding effectively-zero terms."""
+
+    sufficient_stats_include_constant: bool = False
+    """If True, add a constant 1 basis function. False by default —
+    constants are already discoverable by the GP's own Const leaves
+    and the existing optimize_constants polish."""
+
     # Branch-and-bound pruning (interval arithmetic)
     prune_by_lower_bound: bool = False
     """If True, before full evaluation, compute an interval-arithmetic
@@ -421,6 +465,13 @@ class GP:
                 pop = self._polish_pareto_constants(pop, front, env, y_true, gen)
                 # Polished candidates may be HoF improvements too
                 self.hall_of_fame.update_many(pop)
+                front = pareto_front(pop)
+
+            if (self.cfg.sufficient_stats_polish_every > 0
+                and gen % self.cfg.sufficient_stats_polish_every == 0):
+                pop = self._polish_with_sufficient_stats(
+                    pop, front, env, y_true, feature_names, gen,
+                )
                 front = pareto_front(pop)
 
             best = min(pop, key=lambda c: c.fitness)
@@ -697,6 +748,105 @@ class GP:
         if not improved:
             return pop
         return [improved.get(id(c.tree), c) for c in pop]
+
+    def _polish_with_sufficient_stats(self, pop, front, env, y_true,
+                                      feature_names, gen):
+        """Periodic Regime-B polish: augment best candidate with the
+        closed-form-optimal additive polynomial term.
+
+        Implements `docs/research/analytical_delta_loss.md` §4.2 inside
+        the GP. The analytical Δloss prediction is used to *choose* the
+        addition; the resulting tree is re-evaluated via the normal
+        _score path so the new candidate's (cx, loss) lands honestly
+        on the Pareto front (no shortcut around interval pruning,
+        simplification, or the loss function).
+
+        No-ops silently if:
+          - loss_fn is not mse_loss
+          - no Pareto front yet
+          - best candidate's predictions contain NaN / inf
+          - top-N coefficient filter leaves nothing above threshold
+        """
+        if self.loss_fn is not mse_loss or not front:
+            return pop
+
+        # Lazy import — keeps gp.py's import surface unchanged.
+        from .sufficient_stats import polish_tree_with_polynomial_term
+
+        # Best by train_loss (the polish target).
+        best = min(front, key=lambda c: c.train_loss)
+        # Build X from env in feature_names order.
+        feat_names = (
+            list(self.cfg.sufficient_stats_feature_names)
+            if self.cfg.sufficient_stats_feature_names is not None
+            else list(feature_names)
+        )
+        # Filter to features actually present in env (avoids surprise
+        # when caller passes feature_names that include functional vars).
+        feat_names = [n for n in feat_names if n in env]
+        if not feat_names:
+            return pop
+
+        try:
+            X = np.column_stack([np.asarray(env[n], dtype=np.float64)
+                                 for n in feat_names])
+        except (ValueError, KeyError):
+            return pop
+
+        # Get predictions for the best tree (use the existing cache).
+        try:
+            from tessera.expression.tree import evaluate as _eval
+            predictions = _eval(
+                best.tree, env, self.cache,
+                fill_warmup=self.cfg.fill_warmup,
+            )
+            predictions = np.asarray(predictions, dtype=np.float64).reshape(-1)
+        except Exception:
+            return pop
+        if predictions.shape[0] != X.shape[0]:
+            return pop
+        if not np.isfinite(predictions).all():
+            return pop
+
+        # Feature indices into the X columns are just 0..D-1 since we
+        # built X in feat_names order.
+        feature_indices = list(range(len(feat_names)))
+
+        try:
+            new_tree, expected_dl, kept = polish_tree_with_polynomial_term(
+                best.tree, predictions, X,
+                np.asarray(y_true, dtype=np.float64).reshape(-1),
+                feature_names=feat_names,
+                feature_indices=feature_indices,
+                max_degree=self.cfg.sufficient_stats_max_degree,
+                top_n=self.cfg.sufficient_stats_top_n_terms,
+                coef_threshold=self.cfg.sufficient_stats_coef_threshold,
+                include_constant=self.cfg.sufficient_stats_include_constant,
+            )
+        except Exception:
+            return pop
+
+        if kept == 0 or new_tree is best.tree:
+            return pop
+
+        # Re-evaluate the new tree honestly through the full _score
+        # path. The expected_dl is a SANITY CHECK reference, not a
+        # shortcut.
+        new_cand = self._score(new_tree, env, y_true, born_gen=gen)
+        if self.cfg.verbose:
+            actual_dl = new_cand.train_loss - best.train_loss
+            print(
+                f"[gp] sufficient_stats polish gen={gen}: kept={kept} "
+                f"expected_Δloss={expected_dl:.4g} actual_Δloss="
+                f"{actual_dl:.4g} new_cx={new_cand.complexity} "
+                f"new_loss={new_cand.train_loss:.4g}"
+            )
+
+        # Push into the HoF unconditionally so the polish is preserved
+        # even if it doesn't dominate the parent at its complexity.
+        self.hall_of_fame.update_many([new_cand])
+        # Add to population so it gets a chance to breed.
+        return pop + [new_cand]
 
     def _tournament(self, pop):
         contestants = self.rng.sample(pop, k=min(self.cfg.tournament_size, len(pop)))

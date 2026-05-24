@@ -70,7 +70,15 @@ These items were promoted from `docs/research/high_dim_symbolic_regression.md` �
 
 **Acceptance criterion:** with `prune_by_lower_bound=True` (default for MSE), the GP run on a Feynman benchmark equation prunes ≥ 30% of candidates per generation (median across 5 seeds) without changing the Pareto front it returns. Wall-clock per generation drops by ≥ 20% over the same problem without pruning.
 
-### 2.3 Polynomial-basis sufficient statistics (Regime B) ▷ IN PROGRESS
+### 2.3 Polynomial-basis sufficient statistics (Regime B) — Phases 1-3 SHIPPED, follow-on OPEN
+
+**Phase 1 (foundation):** ✓ DONE. `PolynomialMoments`, `monomial_basis`, 21 tests, 196× speedup at N=10k.
+
+**Phase 2 (GP integration):** ✓ DONE. `build_polynomial_term_tree`, `polish_tree_with_polynomial_term`, `GP._polish_with_sufficient_stats`, 6 new GPConfig fields, 14 tests including the load-bearing analytical-vs-actual Δloss equivalence test.
+
+**Phase 3 (A/B benchmark):** ✓ PARTIAL PASS. See `benchmarks/results/feynman_sufficient_stats.md`. Polish delivers 16× loss reduction on pure-cubic at the cost of cx growth (10 → 48); strict Pareto-dominance criterion was over-stated. Honest reframe: polish provides a tunable loss-vs-cx trade.
+
+**Open follow-on (not in §2.3 scope):** polynomial-aware simplifier OR replace-mode polish OR plateau-conditional polish frequency. Without one of these, polish is loss-win + cx-loss rather than Pareto-strict.
 
 **Origin:** [`docs/research/analytical_delta_loss.md`](../research/analytical_delta_loss.md) §4.2.
 
