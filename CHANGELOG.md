@@ -6,6 +6,74 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: SR for inverse kinematics in simulation)
+
+New `docs/research/sr_for_inverse_kinematics.md` (10 sections). Per
+user 2026-05-24 (a robotics vision researcher): "I want to add a
+benchmark test that might be compelling. We can try to solve for
+inverse kinematics of robots in simulation using a physics engine.
+I wonder how SR fares with simulation?"
+
+The doc scopes the question into a concrete benchmark:
+
+**Why IK + simulation is a clean SR test:**
+- Forward kinematics is a *fully-known deterministic function*; the
+  inverse is exact analytical IK (for Pieper-criterion arms) or
+  numerical (otherwise). Either way, the SR target has known ground
+  truth — unlike most ML benchmarks (MNIST, ImageNet) which lack
+  reference formulas.
+- Simulation gives infinite, noiseless data. Isolates the SR-engine
+  question (can it find the formula?) from data-quality (is there
+  enough information?).
+- Per `fit_as_perfect_info_game.md` §3: this is the cleanest
+  possible single-agent perfect-info SR setup.
+
+**Three structural matches to tessera:**
+- Trig vocabulary is now in place (sin/cos shipped 2026-05-24)
+- The same Knuth-style search machinery applies (B&B, equivalence
+  collapse, materialize)
+- The const-opt jax.grad path (just shipped ship #2) refines
+  link lengths / joint offsets cleanly
+
+**Three honest mismatches flagged:**
+- Multi-output target (6-D pose → n-D joint vector); needs either
+  per-joint independent SR or a joint-loss extension
+- Multiple valid solutions (elbow-up vs elbow-down); SR's MSE loss
+  picks one mode but can't represent the solution set
+- `atan2`/`acos`/`asin` not in tessera; needed for tier-A IK
+  formula rediscovery. Cleanest first test is to try WITHOUT and
+  see if the GP approximates.
+
+**Concrete benchmark proposed (§3):**
+3-DoF planar arm, hand-coded FK in numpy (no physics engine
+needed for this geometry); three independent SR runs (one per
+joint); acceptance criteria tiered A/B/C/D so the experimental
+outcome maps directly to a verdict.
+
+**Five sub-questions enumerated (§6):**
+1. Does plain SR rediscover 3-DoF planar IK with sin/cos only?
+2. Search-budget-to-accuracy curve
+3. Multi-output: separate runs vs joint loss?
+4. Generalisation to 6-DoF Pieper
+5. Visual servoing pilot (user's actual research area; bridges
+   the high-dim SR direction)
+
+**Honest expectations (§7):** three named outcomes — tier A
+(all 3 joints exact), tier B (mixed), tier C/D (partial or failed).
+The pessimistic case is the most informative: it would tell us
+that SR has a structural limit on multi-trig compositions.
+
+**Connection to existing research notes (§9):**
+- `fit_as_perfect_info_game.md`: IK is the cleanest perfect-info SR
+- `high_dim_symbolic_regression.md` §5.4: visual servoing as the
+  bridge to two-layer SR
+- `benchmark_score_improvement.md`: trig-primitive shipping path
+  (sin/cos) is the template for adding `atan2` if needed
+
+Suggested first concrete experiment: 3-DoF planar IK benchmark
+(~1 day; flagged as candidate for next promotion to PLANNED if
+the user directs).
+
 ### Added (`jax.grad` constant optimisation — lifecycle ship #2)
 
 Per `docs/planned/roadmap.md` §1.3 (now in "Recently shipped"): the

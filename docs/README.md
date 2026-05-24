@@ -38,6 +38,7 @@ Inside any individual doc, items are flagged with:
 | See the GPU + CV scoping | [`research/gpu_and_cv_via_sr.md`](research/gpu_and_cv_via_sr.md) |
 | Understand the high-dim SR problem + tessera's research position | [`research/high_dim_symbolic_regression.md`](research/high_dim_symbolic_regression.md) |
 | Diagnose Feynman failures + plan score-improvement on existing benchmarks | [`research/benchmark_score_improvement.md`](research/benchmark_score_improvement.md) |
+| Explore SR for inverse kinematics with simulation as ground truth | [`research/sr_for_inverse_kinematics.md`](research/sr_for_inverse_kinematics.md) |
 
 ## Organisational principles
 
