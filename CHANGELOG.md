@@ -6,6 +6,114 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (doc lifecycle convention + research→planned promotion of two SR upgrades)
+
+**Process doc:** new `docs/process.md` codifies the four-stage lifecycle
+(RESEARCH → PLANNED → IN-PROGRESS → SHIPPED) that had emerged organically
+from the May 2026 work but wasn't written down. Each transition is a
+small mechanical edit, not a rewrite. Includes anti-patterns to avoid
+("big design doc up front", "status by prose only", "mixed-stage docs",
+"skipping research stage for obvious features"). The doc itself uses
+the new lifecycle (status: shipped, in `docs/`).
+
+**Two promotions from research to planned** demonstrate the lifecycle in
+action:
+
+- **§2.1 of planned/roadmap.md**: sparsity-bias `random_tree` for high-K
+  Var spaces. Origin: `docs/research/high_dim_symbolic_regression.md`
+  §5.5. Effort ~1 day. Acceptance: `sparsity=10` produces trees with
+  ≤ 10 distinct Var leaves; MNIST K=10 run with sparsity=10 reaches
+  ≥ 73% test acc (3pt over the 71% baseline). Negative result also
+  acceptable (rules out sparsity as a lever).
+
+- **§2.2 of planned/roadmap.md**: default-on GPU-parallel B&B for MSE
+  workloads. Origin: `docs/research/high_dim_symbolic_regression.md`
+  §5.1; companion to `docs/research/fit_as_perfect_info_game.md` §12.
+  Effort ~2 days. Acceptance: ≥ 30% candidates pruned per generation
+  on Feynman; ≥ 20% wall-clock reduction; Pareto front unchanged.
+
+Research-doc back-pointers updated: the original §5.1 and §5.5
+entries now lead with "Promoted to PLANNED on 2026-05-24: see
+docs/planned/roadmap.md §2.X".
+
+The other three §5 directions (equality saturation, ZDD enumeration,
+two-layer SR) stay as ? RESEARCH for now — uncertainty about payoff
+is too high to commit before the cheaper promotions land.
+
+### Added (high-dim SR research note + Knuth-GPU synthesis position)
+
+New `docs/research/high_dim_symbolic_regression.md` documenting:
+
+- The empirical anchor: tessera's MNIST 71.1% test acc with 0.4pt
+  train-test gap (the signature of a hypothesis-class ceiling, not
+  overfitting)
+- Cranmer/PySR's documented stance on high-dim SR (use neural front-end)
+- Recent literature 2021-2025: AI Feynman, DSR, Neural Symbolic
+  Regression that Scales, Cranmer's NeurIPS 2020 hybrid (citations
+  harvested via Perplexity research)
+- The synthesis position: "the SR community hasn't combined Knuth-style
+  serial combinatorial search machinery with GPU parallelism" — each
+  thread exists independently (parallel SAT, parallel BDDs, e-graph
+  saturation), but the combination targeting SR is unpublished
+- Five scalable upgrade directions (multiplicative not additive):
+  GPU-parallel B&B, equality saturation, ZDD enumeration, two-layer
+  SR, sparsity-inducing search
+- Honest falsification criteria (optimistic ~95% / modest ~85% /
+  pessimistic ~75% ceiling)
+
+### Changed (docs organisation: status-based subdirs)
+
+Docs reorganised from a flat structure into three status-based subdirs:
+
+```
+docs/
+├── README.md          (index + status legend)
+├── PROJECT_GOALS.md   (living goal hierarchy)
+├── process.md         (the four-stage lifecycle)
+├── shipped/           (features IN the library)
+├── planned/           (committed-to-build, NOT shipped)
+└── research/          (open exploration; not committed)
+```
+
+52 cross-references rewritten across 18 files (CHANGELOG, READMEs,
+src, tests, notebooks, docs). git mv preserved file history for moved
+docs.
+
+Old structure mixed everything at the top level + `docs/research_notes/`
++ `docs/milestones/`. "What's done" and "what's planned" lived side by
+side; the new structure forces every doc to declare its maturity by
+location. See `docs/README.md` for the navigation table.
+
+### Added (simplifier const-folds + MNIST notebook parsimony bump)
+
+Closes the GP failure mode revealed by the K=10 MNIST run: trees
+containing `M2D[kernel](Const)` or `V2[...](Const)` as dead branches
+inflated complexity without contributing signal. Five new folds:
+
+- `LinearFunctional(μ)(Const c)`     → `Const(c · Σκ)`
+- `Volterra2(μ_a, μ_b)(Const c)`     → `Const(c² · Σκ_a · Σκ_b)`
+- `SeparableBilinear(μ_a, μ_b)(Const c_a, Const c_b)`
+                                      → `Const(c_a · Σκ_a · c_b · Σκ_b)`
+- `Measure2D(M)(Const c)`             → `Const(c · atomic_sum + density_sum)`
+- `X / X`                             → `Const(1.0)` (safe-divide convention)
+
+For the 5pt Laplacian (which sums to zero), this means
+`M2D[laplacian](Const) → Const(0)` — collapsing the most common dead-
+branch pattern observed in MNIST.
+
+12 new tests in `tests/expression/test_simplify.py`. One existing test
+(`test_simplify_recurses_into_functional_args`) updated to reflect new
+fold behaviour for Const inputs.
+
+MNIST notebook `discover_feature_one_vs_rest` default parsimony bumped
+from 0.001 to 0.01 — at cx=15, the penalty contribution goes from 0.015
+to 0.15, comparable to the loss range (0.15-0.25), so dead branches
+actually cost the GP.
+
+GP toy-Laplacian test in `tests/expression/test_tree_2d.py` had its
+budget bumped (pop=40/gens=15 → pop=60/gens=25) to keep seed-stochastic
+behaviour robust against the new mutation trajectory.
+
 ### Added (cross-tree subexpression materialization + structural hardening)
 
 The "fewer evals" lever from the perfect-info-game framing (per

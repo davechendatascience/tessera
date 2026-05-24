@@ -83,7 +83,9 @@ The user's framing 2026-05-24: "*I want scalable upgrades, not simple case-by-ca
 
 Five directions that are *scalable* in the sense of "each one buys orders-of-magnitude more search reach, not constant-factor improvements":
 
-### 5.1 ? GPU-parallel branch-and-bound on equivalence classes
+### 5.1 ○ PLANNED — GPU-parallel branch-and-bound on equivalence classes
+
+> **Promoted to PLANNED on 2026-05-24**: see [`docs/planned/roadmap.md`](../planned/roadmap.md) §2.2.
 
 **The idea:** evaluate INTERVAL BOUNDS (not full losses) for thousands of candidates in one batched GPU launch. Skip the full O(N) loss eval for candidates whose bound exceeds the Pareto incumbent.
 
@@ -123,7 +125,9 @@ Five directions that are *scalable* in the sense of "each one buys orders-of-mag
 
 **Tessera status:** not implemented. Closest existing pattern is the materialize layer (cross-tree caching, May 2026) which is a degenerate one-layer-deep version.
 
-### 5.5 ? Sparsity-inducing search distribution
+### 5.5 ○ PLANNED — Sparsity-inducing search distribution
+
+> **Promoted to PLANNED on 2026-05-24**: see [`docs/planned/roadmap.md`](../planned/roadmap.md) §2.1.
 
 **The idea:** for high-dim inputs (image flattened to 784 pixels, audio waveform), most discovered features should reference *a few specific positions*, not the full input. Bias `random_tree` to produce trees with Var references concentrated on a sparse subset.
 

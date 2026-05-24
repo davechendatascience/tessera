@@ -8,7 +8,9 @@ This directory is organised by **status**, not by topic. Three subdirs:
 | [`planned/`](planned/) | Committed-to-build items that are NOT in the library yet. Each item has an explicit status flag (open / in progress / blocked). |
 | [`research/`](research/) | Open-ended exploration. Not committed to ship. Foundational ideas, conjectures, scoping documents. |
 
-Top-level files (`README.md` and `PROJECT_GOALS.md`) span all three.
+Top-level files (`README.md`, `PROJECT_GOALS.md`, `process.md`) span all three.
+
+**Adding to the docs?** Read [`process.md`](process.md) first. It defines the lifecycle that moves an idea from `research/` → `planned/` → `shipped/`. Each transition is a small mechanical edit, not a rewrite.
 
 ## Status legend
 
