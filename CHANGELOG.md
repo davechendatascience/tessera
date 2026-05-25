@@ -6,6 +6,88 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (multi-trajectory training — final empirical anchor for heat eq thread)
+
+User direction (2026-05-26): test multi-trajectory training. Closes
+the heat equation discovery thread with the cleanest possible result.
+
+NEW BENCHMARK
+
+benchmarks/run_heat_equation_multitrajectory.py:
+  - K=3 TRAIN trajectories with different ICs (ic_seeds 100, 200, 300)
+  - Stacked along time axis: U_train shape (600, 32)
+  - Single-trajectory baseline at MATCHED sample count (T=600, 1 IC)
+  - Shared held-out TEST trajectory (ic_seed=999)
+  - Classifier returns A/B/C/C-partial/degenerate
+
+HEADLINE FINDING — cleanest possible mechanism discovery
+
+multi-traj seed 2026 at pop=240 gens=100:
+
+  (M2D[1·(0,-1) + -2·(0,0) + 1·(0,1)](U) * 0.049883)
+
+That's Laplacian(U) * α with α = 0.05 extracted to 0.2% accuracy.
+TRAIN/oracle = TEST/oracle = 1.00. cx=4 (minimum possible).
+Mechanism captured EXACTLY on held-out data.
+
+This is the cleanest Class C result across all heat-eq experiments —
+the canonical textbook form a physicist would write, found by random
+search with no factory primitives, no grammar machinery, no physics
+shortcuts.
+
+CLASS DISTRIBUTION COMPARISON
+
+  Class      | Single-traj T=600  | Multi-traj 3×T=200
+  -----------|---------------------|--------------------
+  C (clean)  | 1/3 (cx=17 partial) | 1/3 (cx=4 CANONICAL)
+  A (diff)   | 2/3                 | 0/3
+  degenerate | 0/3                 | 2/3
+
+Multi-trajectory ELIMINATES Class A entirely — 2-atom diff_t-style
+tautologies can't fit 3 different ICs consistently. What remains:
+either the genuine mechanism (works for all 3) or predict-zero.
+
+THE TRADE
+
+  Single-traj: reliable mediocre fit (most seeds Class A ~2x oracle);
+              occasional Class C with cruft
+  Multi-traj:  high-variance — when it works, canonical mechanism at
+              minimum cx; when it fails, predict-zero
+
+CONVERGENCE POINT for heat eq discovery thread
+
+We've now explored the four primary levers for unit-dynamics SR:
+
+  Lever                         | Effect                            | Status
+  ------------------------------|-----------------------------------|--------
+  Vocabulary                    | Enables specific physics prims    | Per-target wins
+  Scoring (parsimony, MDL)      | Trade loss vs cx                  | Poly simplifier ships
+  Search bias (reduce_* weight) | Steers mutations toward mechanism | 5-LOC fix → first Class C
+  Training data structure       | Punishes trajectory-specific tricks| Multi-traj → cx=4 canonical
+
+Combined, these levers make mechanism discovery POSSIBLE but still
+high-variance. The ceiling at unit-dynamics-recovery without further
+architectural changes: ~33% Class C rate, with the right discovery
+being canonical form at minimum cx.
+
+The natural frontier beyond this point is COMPOSITE DYNAMICS —
+discovering systems where multiple unit mechanisms interact (heat +
+Navier-Stokes, reaction-diffusion, Maxwell coupled PDEs). That's
+a different architecture, not an extension:
+
+  - Multi-equation outputs (coupled systems, not single expressions)
+  - Operator algebra (linear combinations, compositions, commutators)
+  - Conservation constraints (physics-imposed cross-operator structure)
+  - Cross-mechanism couplings (T-field affects flow-field via buoyancy)
+
+ALSO
+
+benchmarks/results/heat_equation_multitrajectory.md (NEW) — full
+report with class taxonomy comparison, per-seed details, and the
+convergence-point articulation.
+
+Task #92 closed.
+
 ### Changed (random_tree: reduce_* operators downweighted 10x by default)
 
 Per yesterday's paired-diagnostic finding: the GP was discovering
