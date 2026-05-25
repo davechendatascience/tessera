@@ -6,6 +6,106 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (C2 pre-analysis — basket complete with 5 experiments + 1 analysis-only)
+
+User direction (2026-05-26): write C2 pre-analysis to complete the
+basket discipline. The user's preference for the discipline (theory
+before experiment) means pre-analysis is acceptable as a deliverable
+when the experiment would predictably produce a null result.
+
+NEW docs/research/c2_distributional_trees_analysis.md (~280 lines)
+
+THE CONJECTURE
+
+Distributional-output trees (μ, σ) capture stochastic dynamics
+better than single-output point predictors. Loss is Gaussian
+negative log-likelihood.
+
+PROVABLE PART (3a)
+
+Under Gaussian noise with state-dependent variance, distributional
+output is STRICTLY better than fixed-σ MSE by standard MLE optimality.
+This is proven.
+
+EMPIRICAL PART (3b) — REQUIRES BENCHMARK CLASS WE DON'T HAVE
+
+For C2 to help, the benchmark must have state-dependent noise:
+
+  | Benchmark              | Noise structure       | C2 would help? |
+  | Heat equation          | σ=0.002 constant       | No - equiv to MSE |
+  | Feynman                | σ=0 deterministic      | No - NLL ill-defined |
+  | IK 3-DoF               | Deterministic          | No |
+  | MNIST features         | Deterministic per image| No |
+
+None of tessera's existing benchmarks have heteroskedastic targets.
+
+What WOULD test C2:
+  - Spatially-heteroskedastic heat eq (~1 day to build)
+  - Ornstein-Uhlenbeck process (~half day)
+  - GARCH-style heteroskedastic time series (~1 day, financial)
+  - Hawkes self-exciting process (~1 week)
+
+Each of these is its own infrastructure project.
+
+DECISION
+
+Pre-analysis only. No empirical experiment. The conditional-
+helpfulness pattern from C5 predicts:
+  - C2 on existing benchmarks: ≈ baseline at best (no signal)
+  - C2 on heteroskedastic benchmark: validates if built
+  - Per pattern, C2 sits in same conditional regime as C5
+
+Spending 1-2 weeks implementing C2 to confirm a predicted-null
+result is poor allocation. The pre-analysis IS the deliverable.
+
+THE BASKET DISCIPLINE NOW COMPLETE
+
+  | Conjecture | Status                       | Layer                   |
+  | C1 (ABC)    | FALSIFIED                    | Scoring/fitness         |
+  | C4 (causal) | PARTIAL                      | Hard search restriction |
+  | C3 (MDL)    | FALSIFIED                    | Scoring/fitness         |
+  | C6 (adapt)  | VALIDATED-AS-PREDICTED-NEG   | Search direction        |
+  | C5 (CF)     | CONDITIONAL POS (cross-val)  | Post-hoc selection      |
+  | C2 (dist)   | **PRE-ANALYSIS ONLY**        | Tree representation     |
+
+Total: 5 experiments + 1 analysis-only = 6 conjectures examined.
+
+STRUCTURAL FINDING FROM THE BASKET
+
+Tessera's tools have benchmark-class-dependent payoff. No universal
+scoring/selection improvement.
+
+  Productive layers (helped in some benchmark class):
+    - Data-level (mutation defaults: reduce_*, training: multi-traj)
+    - Post-hoc selection (C5, conditional on overfit failure mode)
+    - Vocabulary (sin/cos/atan2; benchmark-specific)
+    - Tree representation (C2, predicted for heteroskedastic class)
+
+  Unproductive layers (no help on any benchmark tested):
+    - Scoring/fitness modification (C1, C3)
+    - Adaptive search direction (C6)
+    - Hard search restriction (C4 — eliminates failures only)
+
+ALSO
+
+docs/README.md: nav entry added
+docs/research/process_discovery_sr.md §6.1: result note added
+src/tessera/experimental/__init__.py: C2 placeholder updated with
+  pre-analysis status
+
+Task #103 closed.
+
+THE NATURAL STOPPING POINT
+
+The basket discipline has produced its structural lesson. Six
+conjectures examined; pattern characterized; cross-benchmark
+validated for the one positive (C5). The remaining work options:
+
+  1. Synthesize the basket findings into a closing research note
+  2. Ship C5 as an opt-in tool (~half day)
+  3. Build a heteroskedastic benchmark and test C2
+  4. Move to a different problem entirely
+
 ### Added (cross-benchmark validation of C5 on Feynman — PARTIAL/CONDITIONAL)
 
 User direction (2026-05-26): validate C5 across benchmarks before

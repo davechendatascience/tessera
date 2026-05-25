@@ -373,6 +373,10 @@ The direction is genuinely a *tessera direction* — it builds on existing archi
 
 > **C5 validated, selection-layer version (2026-05-26):** Pre-analysis in `docs/research/c5_counterfactual_eval_analysis.md`; experiment in `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`. Counterfactual ranking applied as a post-hoc selector on baseline Pareto fronts: when mechanism candidates exist (2/5 seeds), CF ranking correctly identifies them (2/2); when absent, CF correctly picks best-available Class A. CF score cleanly discriminates mechanism (median ≤ 1.5) from non-mechanism (median > 1.7). Seed 2027: CF found a Pareto-strict improvement over train-loss selection (lower cx at same accuracy). **First VALIDATED-POSITIVE conjecture in the basket. The selection layer is the productive layer** — scoring-layer interventions don't help (C1/C3/C6) but post-hoc selection-layer evaluation does.
 
+> **C5 cross-benchmark on Feynman: conditional helpfulness (2026-05-26):** `benchmarks/results/feynman_counterfactual_validation.md`. CF ranking and train-loss selection agreed in 24/24 (target, seed) pairs. CF didn't help and didn't hurt — Feynman has no natural-overfit failure mode for CF to discriminate against. C5 is CONDITIONALLY helpful: useful when benchmark has Class-B-style overfit candidates; neutral otherwise. Deployment recommendation: ship as explicit opt-in tool, not default.
+
+> **C2 pre-analysis only (2026-05-26):** `docs/research/c2_distributional_trees_analysis.md`. Distributional-output trees (μ, σ) are provably better for state-dependent noise (3a holds), but tessera's current benchmarks (heat eq with constant σ; Feynman noiseless; IK deterministic) have no heteroskedasticity for C2 to exploit. Per conditional-helpfulness pattern from C5, C2 on existing benchmarks would be ≈baseline at best. **Decision: pre-analysis only; no empirical experiment.** C2 becomes worth building when a stochastic-dynamics benchmark (spatially-heteroskedastic heat eq, OU, GARCH) is added to tessera.
+
 ## 9. Falsification
 
 What would tell us this direction is wrong:

@@ -91,6 +91,9 @@ Named-but-not-yet-implemented conjectures awaiting experimental work
         (target module: abc_scoring.py)
   - C2: Distributional-output trees capture stochastic dynamics
         (target module: distributional_trees.py)
+        STATUS: pre-analysis only (see docs/research/c2_distributional_trees_analysis.md);
+        not implementable on current benchmarks; deferred until
+        heteroskedastic benchmark is added
   - C3: MDL with explicit log-likelihood beats ad-hoc parsimony
         (target module: mdl_scoring.py)
   - C4: Causal direction priors at tree-level reduce search space

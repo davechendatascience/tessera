@@ -50,6 +50,7 @@ Inside any individual doc, items are flagged with:
 | C3 theoretical pre-analysis: MDL vs ad-hoc parsimony — calibration math predicts MDL overfits at tessera's N/σ; experiment validates math, not the original conjecture | [`research/c3_mdl_analysis.md`](research/c3_mdl_analysis.md) |
 | C6 theoretical pre-analysis: residual-diagnostics-driven adaptive search — mapping problem makes generic adaptation unlikely to help; specific mappings are hand-engineering | [`research/c6_residual_diagnostics_analysis.md`](research/c6_residual_diagnostics_analysis.md) |
 | C5 theoretical pre-analysis: counterfactual evaluation harness — fitness-term version predicted to fail per pattern; post-hoc ranking version is at a new (selection) layer worth testing | [`research/c5_counterfactual_eval_analysis.md`](research/c5_counterfactual_eval_analysis.md) |
+| C2 pre-analysis: distributional-output trees — provable in principle, but current tessera benchmarks lack the heteroskedasticity it would address. Pre-analysis is the deliverable; no empirical test | [`research/c2_distributional_trees_analysis.md`](research/c2_distributional_trees_analysis.md) |
 
 ## Organisational principles
 
