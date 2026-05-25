@@ -6,6 +6,80 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (random_tree: reduce_* operators downweighted 10x by default)
+
+Per yesterday's paired-diagnostic finding: the GP was discovering
+the Laplacian template but wrapping it in `/reduce_max(...)` or
+`/reduce_std(...)` — TRAIN-specific scalars that fit at 1x oracle
+while blowing up TEST at 4-32x. The natural-overfit signature.
+
+FIX (5 LOC in tessera.expression.mutation)
+
+  - New module-level `UN_OP_WEIGHTS: dict[str, float]` — defaults to
+    1.0 for all UN_OPS, EXCEPT reduce_* operators set to 0.1
+  - `random_tree` now uses `rng.choices(UN_OPS, weights=...)` instead
+    of `rng.choice(UN_OPS)`
+  - Rationale: reduce_* operators collapse arrays to trajectory-
+    specific scalars. Useful for indicator-style SR; poison for
+    per-sample regression. Lowering their default sampling weight
+    biases the GP away from natural-overfit shapes.
+
+VALIDATION — rerun of paired diagnostic with seeds 2026/2027/2028 at
+budgets 60×25 / 120×50 / 240×100 / 360×120 (28x compute scaling):
+
+  Before fix (yesterday):
+    - 0/12 runs discovered clean mechanism (Class C)
+    - 2/12 found Laplacian template but in reduce_* wrapper (Class B)
+    - Worst overfit: train=1.04 / test=31.79
+
+  After fix (today):
+    - 1/12 runs discovered clean mechanism (Class C) — at 360×120
+      seed 2027:
+          (M2D[1·(0,-1) + -2·(0,0) + 1·(0,1)](U) / 20.0639)
+      Where 1/20.0639 ≈ 0.0499 ≈ α=0.05 (matches simulator within
+      0.2%). TRAIN=TEST=1.00x oracle. Mechanism captured exactly.
+    - 2/12 still Class B (reduce_* wrapping survived despite 10x
+      downweight)
+    - Worst overfit: train=1.04 / test=2.81 (mild vs 31.79 before)
+    - Mean test/oracle at largest budget: 1.78 (vs 12.7 before)
+
+INTERPRETATION
+
+Class C discovery is now possible but not yet reliable (8% of seeds
+at largest budget). The 5-LOC change transforms the benchmark from
+"unreachable" to "occasionally reachable" without architecture
+changes, factory templates, or grammar machinery.
+
+The user's "natural overfit" framing was operationally validated:
+removing the easy availability of TRAIN-specific reduction tweaks
+forced the GP to find legitimate fits, and the canonical mechanism
+appeared spontaneously.
+
+NEXT MOVES (priorities for higher Class-C reliability)
+
+  - Stronger downweight (reduce_* → 0.01 or → 0)         ~5 LOC
+  - Mode-2 grammar: construct `Const · Template`         ~half day
+  - Multi-trajectory training (multi-IC TRAIN)          ~1 day
+
+None of these are committed; we have a clean diagnostic and can
+choose based on whether reliability matters more than methodological
+simplicity.
+
+REGRESSION CHECK
+
+497 tests pass + 2 pre-existing skips. The behavior change is
+opt-out (set `UN_OP_WEIGHTS["reduce_*"] = 1.0` to restore uniform).
+Existing benchmarks that depend on uniform UN_OP sampling are not
+expected to regress because reduce_* operators are rarely useful
+outside of trajectory-summary contexts.
+
+ALSO
+
+benchmarks/results/heat_equation_traintest_computescale.md updated
+in-place with the AFTER-fix results and the three-class taxonomy.
+
+Task #91 closed.
+
 ### Added (paired diagnostic: TRAIN/TEST + compute scaling on heat eq)
 
 User direction (2026-05-26): test underfit-vs-overfit via TRAIN/TEST

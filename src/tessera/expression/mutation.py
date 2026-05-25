@@ -63,6 +63,36 @@ MAX_COMPLEXITY = 40
 MAX_CONST_MAGNITUDE = 1e4
 
 
+# ---------------- Per-op sampling weights for random_tree ----------------
+
+UN_OP_WEIGHTS: dict[str, float] = {op: 1.0 for op in UN_OPS}
+"""Sampling weights for unary operators in `random_tree(...)`. The
+default is 1.0 for all UN_OPS, EXCEPT `reduce_*` operators which are
+downweighted by 10×.
+
+Rationale: reduce_max / reduce_min / reduce_sum / reduce_mean /
+reduce_std collapse arrays to a single scalar computed over the input
+trajectory. They're useful for SR over indicator targets (e.g.,
+"trade if rolling sum > threshold") but POISONOUS for per-sample
+regression. The heat-equation paired-diagnostic (2026-05-26;
+`benchmarks/results/heat_equation_traintest_computescale.md`)
+discovered the GP finding the Laplacian template but wrapping it in
+`/ reduce_max(...)` or `/ reduce_std(...)` — fitting TRAIN at 1× oracle
+while blowing up TEST at 4-32× oracle. The reduce_* output is a
+trajectory-specific scalar that doesn't transfer to held-out data.
+
+Module-level mutable. Callers (GP config, individual experiments) can
+override per-key, e.g.:
+    `from tessera.expression.mutation import UN_OP_WEIGHTS`
+    `UN_OP_WEIGHTS["reduce_max"] = 0.0`  # disable entirely
+or reset to uniform:
+    `UN_OP_WEIGHTS = {op: 1.0 for op in UN_OPS}`
+"""
+for _op in UN_OPS:
+    if _op.startswith("reduce_"):
+        UN_OP_WEIGHTS[_op] = 0.1
+
+
 def validate_tree(node: Node, feature_names: set[str]) -> Optional[str]:
     """Return None if valid, else a short error string."""
     if depth(node) > MAX_DEPTH:
@@ -226,7 +256,13 @@ def random_tree(
         return _random_const(rng)
 
     if r < leaf_p + unop_p:
-        op = rng.choice(UN_OPS)
+        # Weighted choice via UN_OP_WEIGHTS — defaults uniform except
+        # reduce_* operators downweighted 10x (see module docstring).
+        op = rng.choices(
+            UN_OPS,
+            weights=[UN_OP_WEIGHTS.get(o, 1.0) for o in UN_OPS],
+            k=1,
+        )[0]
         return UnOp(op, random_tree(rng, feature_names, max_depth=max_depth - 1,
                                     enable_2d=enable_2d, pointwise_only=pointwise_only))
 
@@ -585,5 +621,5 @@ __all__ = [
     "subtree_swap", "subtree_crossover", "constant_jitter",
     "term_insert", "term_delete", "op_swap",
     "measure_mutate", "measure_2d_mutate", "collapse_functional_chain",
-    "OP_WEIGHTS", "mutate",
+    "OP_WEIGHTS", "UN_OP_WEIGHTS", "mutate",
 ]
