@@ -363,6 +363,8 @@ How this direction builds on what tessera already has:
 
 The direction is genuinely a *tessera direction* — it builds on existing architecture, doesn't require a separate codebase, and extends rather than replaces what works.
 
+> **C1-refined empirically falsified (2026-05-26):** First-pass test on heat equation discovery. See `benchmarks/results/heat_equation_abc_mvp71.md`. ABC scoring on held-out trajectory eliminates Class B but ALSO suppresses Class C discovery; pointwise MSE on held-out data is strictly better at this benchmark. The conjecture in its current form does not hold. Module `tessera.experimental.abc_scoring` preserved for future re-evaluation (different β, different statistics, or genuinely-stochastic benchmark).
+
 ## 9. Falsification
 
 What would tell us this direction is wrong:

@@ -6,6 +6,99 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (MVP 7.1 / Conjecture C1-refined — FALSIFIED at tested β values)
+
+User direction: ship C1-refined as first experiment.
+
+First occupant of tessera.experimental. Implements C1-refined from
+process_discovery_sr.md: "ABC-style scoring on held-out trajectory
+suppresses Class B more than pointwise MSE." Three-mode A/B/C
+comparison on heat equation discovery at pop=240 gens=100, 5 seeds
+per mode, β ∈ {0.1, 1.0}.
+
+NEW FILES
+
+src/tessera/experimental/abc_scoring.py:
+  compute_summary_stats(arr) — 6 summary stats on 1-D or 2-D arr
+  abc_distance(obs, pred) — normalized squared-relative-error
+                            with clipping for numerical stability
+  GPWithHoldout(GP) — subclass that augments fitness with hold-out
+                      ABC and/or MSE terms
+
+tests/experimental/test_abc_scoring.py — 16 tests covering summary
+stats correctness, ABC distance properties (zero on match,
+scale-invariance, NaN-robust), GPWithHoldout end-to-end.
+
+benchmarks/run_heat_equation_abc_mvp71.py — three-mode comparison
+benchmark with classification (A/B/C/C-partial/degenerate).
+
+benchmarks/results/heat_equation_abc_mvp71.md — full report with
+verdict and per-seed details.
+
+EXPERIMENTAL RESULT — CONJECTURE FALSIFIED
+
+  | | Baseline (A) | Hold MSE (B) | Hold ABC (C) |
+  |---|---|---|---|
+  | Class C at β=1.0 | 1/5 | 1/5 | 0/5 |
+  | Class C at β=0.1 | 1/5 | 1/5 | 0/5 |
+  | Class C-partial β=0.1 | 0/5 | 1/5 | 1/5 |
+  | Class B at β=1.0 | 1/5 | 0/5 | 0/5 |
+  | Class B at β=0.1 | 1/5 | 0/5 | 0/5 |
+
+Both held-out modes eliminate Class B. But ABC mode ALSO eliminates
+Class C discovery, while pointwise MSE preserves it. The conjecture
+"ABC suppresses Class B more than pointwise MSE" is not supported —
+both suppress Class B equally; ABC additionally suppresses Class C
+which is undesired.
+
+WHY THE CONJECTURE FAILED
+
+ABC is too uniform between Class A (generic diff) and Class C (clean
+mechanism). Both have similar summary stats on the hold-out
+trajectory; ABC can't distinguish them strongly. The GP defaults to
+Class A (easier to find by random mutation, 2-atom Measure2D) and
+never explores the harder 3-atom Laplacian template (Class C).
+
+Pointwise MSE has a stronger A-vs-C gradient (Class A penalty ~2x
+oracle, Class C penalty ~1x) so it preserves Class C when found.
+
+WHAT THE EXPERIMENT VALIDATES
+
+  - The experimental discipline works: research note → module →
+    empirical test → falsification — clean cycle in ~1 day
+  - GPWithHoldout machinery is correct: zero-β matches baseline
+    bit-for-bit; positive β shifts the population
+  - The ABC distance + summary statistics are well-behaved
+    (scale-invariant, NaN-robust)
+  - The negative result is informative: pointwise hold-out CV is
+    sufficient; we should not invest further in ABC at this benchmark
+
+PRACTICAL RECOMMENDATION
+
+Use pointwise MSE on held-out data when "use held-out evaluation"
+is desired. ABC adds complexity without empirical benefit on this
+benchmark class.
+
+MODULE STATUS UPDATED
+
+src/tessera/experimental/abc_scoring.py docstring updated to mark
+status as FALSIFIED at β ∈ {0.1, 1.0}. Module preserved for potential
+re-evaluation (different β, different summary stats, or genuinely-
+stochastic benchmark like OU process or Hawkes process where ABC's
+natural fit might be a better match).
+
+src/tessera/experimental/__init__.py inventory table updated.
+
+docs/research/process_discovery_sr.md §9 — falsification note added
+with link to the empirical report.
+
+Task #97 closed.
+
+Methodologically, this is a clean win for the experimental discipline:
+we made a conjecture, tested it cheaply, got a clear negative result,
+and recorded it honestly. The next conjecture (C2-C6 from
+process_discovery_sr.md) can be tested independently.
+
 ### Added (tessera.experimental subpackage — discipline for unvalidated conjectures)
 
 User direction (2026-05-26): novel conjectures need to be made

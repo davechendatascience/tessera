@@ -56,9 +56,13 @@ docs/shipped/X.md                 tessera/<home>/X.py + tests
 Inventory (current)
 -------------------
 
-Empty. This is the initial scaffold commit. The first occupant will
-be added when a research-note conjecture is selected for empirical
-validation.
+| Module | Conjecture | Status | Last evaluation |
+|---|---|---|---|
+| abc_scoring.py | C1-refined (process_discovery_sr.md §6.2 + §7.1) | **FALSIFIED** at β ∈ {0.1, 1.0} on heat eq | 2026-05-26 |
+
+Module preserved for potential re-evaluation. See
+`benchmarks/results/heat_equation_abc_mvp71.md` for the experimental
+report.
 
 To add a module: copy this checklist into the new module's docstring:
 
