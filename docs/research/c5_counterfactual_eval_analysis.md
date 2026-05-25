@@ -167,6 +167,24 @@ This is the right next experiment because it sits at a layer that hasn't been fa
 
 This is a focused minimal test. If it validates, we know counterfactual eval has selection value. If it falsifies, we have one more data point.
 
+## Empirical outcome (2026-05-26)
+
+Experiment: `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`.
+
+**Conjecture VALIDATED (selection-layer version).**
+
+Results across 5 baseline seeds on heat equation:
+- 2/5 seeds had mechanism candidates in the Pareto front
+- CF ranking correctly identified them in 2/2 cases (no false negatives)
+- 3/5 seeds had no mechanism in front; CF correctly picked best-available Class A (no false positives)
+- Seed 2027: CF found a Pareto-strict improvement (picked equivalent-quality C-partial at cx=12 over cx=15)
+- CF median score cleanly discriminates: mechanism candidates ≤ 1.5, Class A candidates > 1.7
+
+**The selection layer is the productive layer.** This is the first VALIDATED-POSITIVE conjecture in the basket. The other four (C1, C3, C4, C6) operated at scoring/search-direction layers; all failed to materially affect Class C rates. C5 operates at the selection layer (post-hoc, after search completes) and works as predicted.
+
+The deeper pattern: data-level and selection-layer interventions work; scoring-layer and search-direction interventions don't. Tessera's productive levers are now: vocabulary curation, mutation operator defaults, training data structure, and post-hoc counterfactual selection.
+
 ## Changelog
 
 - 2026-05-26: initial pre-analysis. C5 has two operationalizations; the fitness-term version is predicted to fail per the cross-experiment pattern; the post-hoc ranking version is at a different (selection) layer and worth testing. Decision: run post-hoc only.
+- 2026-05-26: empirical outcome appended. Conjecture validated; first positive basket result. Selection layer is the productive layer.

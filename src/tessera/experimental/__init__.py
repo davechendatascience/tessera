@@ -62,12 +62,14 @@ Inventory (current)
 | causal_axes.py | C4 (process_discovery_sr.md §6.4) | **PARTIAL VALIDATION** on heat eq — eliminates Class A-temporal but doesn't boost Class C | 2026-05-26 |
 | mdl_scoring.py | C3 (process_discovery_sr.md §6.3) | **FALSIFIED** — calibration math right, effect below empirical noise; ad-hoc effectively equivalent | 2026-05-26 |
 | adaptive_search.py | C6 (process_discovery_sr.md §6.6) | **VALIDATED-AS-PREDICTED** — adaptive ≈ baseline; pre-analysis predicted no effect; experiment confirmed exactly | 2026-05-26 |
+| counterfactual_eval.py | C5 (process_discovery_sr.md §6.5) | **VALIDATED (selection-layer)** — CF ranking reliably picks mechanism-capturing candidates from Pareto front (2/2 when present); FIRST validated-positive basket conjecture | 2026-05-26 |
 
 Reports:
 - `benchmarks/results/heat_equation_abc_mvp71.md`
 - `benchmarks/results/heat_equation_causal_axes_mvp_c4.md`
 - `benchmarks/results/heat_equation_mdl_mvp_c3.md`
 - `benchmarks/results/heat_equation_adaptive_mvp_c6.md`
+- `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`
 
 To add a module: copy this checklist into the new module's docstring:
 

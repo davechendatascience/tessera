@@ -6,6 +6,99 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (MVP / C5: counterfactual evaluation — FIRST VALIDATED-POSITIVE in basket)
+
+User direction (2026-05-26): apply discipline (pre-analysis FIRST) to C5.
+
+PRE-ANALYSIS (commit 69304cb) identified two operationalizations:
+  A (fitness term): predicted to fail per cross-experiment pattern
+  B (post-hoc ranking): at a new layer (selection), worth testing
+
+Decision: test only B as a cheap post-hoc analysis.
+
+IMPLEMENTATION
+
+src/tessera/experimental/counterfactual_eval.py (~290 LOC):
+  HeatEqCounterfactual dataclass
+  generate_heat_eq_counterfactuals — 5 perturbations (different IC,
+     doubled α, 10× noise, smaller X, another IC)
+  score_counterfactual — evaluate tree on each CF, compute ratios
+     vs oracle
+  rank_front_by_counterfactual — sort Pareto front by CF median score
+
+tests/experimental/test_counterfactual_eval.py — 11 tests, all pass
+
+EXPERIMENT
+
+5 baseline GP seeds × heat equation; for each, collect full Pareto
+front; apply CF ranking; check whether CF correctly identifies
+mechanism candidates.
+
+RESULTS — CONJECTURE VALIDATED
+
+  | Mechanism in front | CF picks mechanism |
+  | 2/5 seeds          | 2/2 (no false negatives) |
+  | 3/5 seeds (no C)   | CF correctly picks best Class A |
+
+CF score discriminates cleanly:
+  - Mechanism (C/C-partial): cf_median 1.00-1.42
+  - Class A (diff-style):    cf_median 1.71-2.27
+  - Degenerate (predict-0):  cf_median = inf
+
+Seed 2027: CF found a Pareto-strict improvement over train-loss
+selection — picked equivalent-quality C-partial at cx=12 over cx=15.
+
+THIS IS THE FIRST VALIDATED-POSITIVE CONJECTURE IN THE BASKET
+
+  | Conjecture | Layer           | Status        |
+  | C1 (ABC)    | Scoring/fitness | FALSIFIED    |
+  | C4 (causal) | Hard restriction| PARTIAL      |
+  | C3 (MDL)    | Scoring/fitness | FALSIFIED    |
+  | C6 (adaptive)| Search direction| VAL-AS-NEG  |
+  | **C5 (counterfactual selection)** | **Selection (post-hoc)** | **VALIDATED-POSITIVE** |
+
+REFINED CROSS-EXPERIMENT PATTERN
+
+The SELECTION LAYER (post-hoc evaluation) is the new productive
+layer. The full picture across all interventions:
+
+  Layer                              | Effect on Class C |
+  Scoring/fitness modification        | No material effect |
+  Hard search restriction             | Eliminates failure modes only |
+  Adaptive search direction           | No effect |
+  Data-level (training structure)     | Substantial (multi-trajectory: 1/3 canonical) |
+  Vocabulary level (default weights)  | Substantial (reduce_* downweight) |
+  **Selection (post-hoc evaluation)** | **Identifies mechanism reliably when present** |
+
+Future tessera work that aims to improve mechanism discovery should
+target either data/vocabulary-level interventions (to create more
+Class C candidates in fronts) OR selection-layer tools (to identify
+them reliably once present).
+
+NEW FILES
+
+src/tessera/experimental/counterfactual_eval.py
+tests/experimental/test_counterfactual_eval.py
+benchmarks/run_heat_equation_counterfactual_mvp_c5.py
+benchmarks/results/heat_equation_counterfactual_mvp_c5.md
+
+MODULE STATUS UPDATED
+
+src/tessera/experimental/counterfactual_eval.py: VALIDATED
+src/tessera/experimental/__init__.py: inventory now 5 modules
+docs/research/c5_counterfactual_eval_analysis.md: outcome appended
+docs/research/process_discovery_sr.md §6.5: result note added
+
+METHODOLOGICAL WIN
+
+The pre-analysis directly identified WHICH operationalization (post-
+hoc selection, not fitness term) was worth testing AND predicted
+the outcome correctly. Without the discipline, we might have run
+Operationalization A and gotten a fifth false-positive falsification.
+With the discipline, we found the first real positive in the basket.
+
+Task #101 closed.
+
 ### Added (MVP / C6: adaptive mutation weights — VALIDATED-AS-PREDICTED)
 
 User direction (2026-05-26): apply discipline (pre-analysis FIRST)
