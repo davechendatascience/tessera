@@ -6,6 +6,88 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (MVP / Conjecture C4: causal direction priors — PARTIAL VALIDATION)
+
+User direction (2026-05-26): C4 first from the experimental basket.
+
+Second occupant of tessera.experimental. Implements C4 from
+process_discovery_sr.md §6.4: causal direction priors at the tree
+level. Operationalized as a hard constraint on Measure2D atoms —
+all atoms must share the same lag_t (no temporal-derivative shortcut).
+
+EXPERIMENT
+
+Two-mode comparison on single-trajectory heat equation training:
+  - Baseline:  standard GP
+  - With C4:   GPWithCausalAxes(penalty=1e6) — hard rejection of
+               temporal-violator candidates (train_loss = inf, fitness = inf)
+
+5 seeds, pop=240, gens=100. Wall-clock ~80s.
+
+RESULT — PARTIAL VALIDATION
+
+  | Mode      | Class C | Class A-temporal | Class A-spatial | Degenerate |
+  | Baseline  | 1/5     | 4/5              | 0/5             | 0/5        |
+  | With C4   | 1/5     | 0/5              | 2/5             | 2/5        |
+
+Both parts of the conjecture hold:
+  ✓ Reduces effective search space (Class A-temporal eliminated)
+  ✓ Doesn't lose the right answer (Class C rate unchanged at 1/5)
+
+What the conjecture did NOT promise (and we hoped for):
+  ✗ Class C rate would RISE above baseline. It didn't.
+
+TAXONOMIC REFINEMENT (new contribution)
+
+The class taxonomy now distinguishes:
+  A-temporal: M2D atoms span lag_t (target leakage via time-diff)
+  A-spatial:  M2D atoms share lag_t (honest spatial approx, wrong mechanism)
+  B:          Laplacian template + reduce_* (natural-overfit wrapper)
+  C:          clean Const · Laplacian (mechanism captured)
+
+C4 forces the GP to be HONEST — it eliminates the dishonestly-good
+A-temporal in favor of honestly-wrong A-spatial. Methodologically
+useful even when it doesn't boost C.
+
+WHY C4 DOESN'T BOOST CLASS C
+
+3-atom +1/-2/+1 Laplacian template is rare to discover by random
+Measure2D atom generation. C4's constraint forbids temporal atoms
+but doesn't bias TOWARD 3-atom spatial. So GP falls back to easier
+2-atom A-spatial. Constraint is necessary but not sufficient.
+
+NEW FILES
+
+src/tessera/experimental/causal_axes.py — ~190 LOC:
+  is_pure_spatial_m2d(measure_2d) → bool
+  tree_violates_causal_spatial(node) → bool
+  count_violating_m2ds(node) → int
+  GPWithCausalAxes(GP) — hard rejection via inf train_loss/fitness
+
+tests/experimental/test_causal_axes.py — 19 tests, all pass
+
+benchmarks/run_heat_equation_causal_axes_mvp_c4.py — 2-mode A/B
+benchmarks/results/heat_equation_causal_axes_mvp_c4.md — verdict + refinement
+
+MODULE STATUS UPDATED
+
+src/tessera/experimental/causal_axes.py: status "PARTIAL VALIDATION".
+src/tessera/experimental/__init__.py: inventory table updated.
+docs/research/process_discovery_sr.md §6.4: result note added.
+
+CUMULATIVE PICTURE — two experiments now in the basket
+
+  | Conjecture | Status | Effect on Class C rate |
+  | C1 (ABC scoring) | FALSIFIED | -1/5 (hurt mechanism) |
+  | C4 (causal priors) | PARTIAL | 0/5 (preserved, didn't boost) |
+
+Neither delivers transformative gains. The most effective single
+intervention remains multi-trajectory training (1/3 at cx=4 canonical
+from the earlier session). Each negative or partial result narrows
+the next investigation.
+
+Task #98 closed.
+
 ### Added (MVP 7.1 / Conjecture C1-refined — FALSIFIED at tested β values)
 
 User direction: ship C1-refined as first experiment.

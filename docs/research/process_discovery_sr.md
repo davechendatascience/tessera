@@ -365,6 +365,8 @@ The direction is genuinely a *tessera direction* — it builds on existing archi
 
 > **C1-refined empirically falsified (2026-05-26):** First-pass test on heat equation discovery. See `benchmarks/results/heat_equation_abc_mvp71.md`. ABC scoring on held-out trajectory eliminates Class B but ALSO suppresses Class C discovery; pointwise MSE on held-out data is strictly better at this benchmark. The conjecture in its current form does not hold. Module `tessera.experimental.abc_scoring` preserved for future re-evaluation (different β, different statistics, or genuinely-stochastic benchmark).
 
+> **C4 partial validation (2026-05-26):** Test on heat equation. See `benchmarks/results/heat_equation_causal_axes_mvp_c4.md`. Causal-spatial constraint eliminates Class A-temporal (the temporal-derivative tautology) as designed AND doesn't lose the right answer (Class C still found at 1/5 with same canonical form). BUT does NOT boost Class C above baseline rate — the GP falls back to Class A-spatial or degenerate. Module `tessera.experimental.causal_axes` preserved; necessary but not sufficient intervention. Taxonomic refinement (Class A-temporal vs Class A-spatial) exposed as a useful diagnostic.
+
 ## 9. Falsification
 
 What would tell us this direction is wrong:
