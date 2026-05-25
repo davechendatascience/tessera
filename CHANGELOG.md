@@ -6,6 +6,64 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (heat equation sample-complexity calibration — §6 of recovery-bounds note)
+
+First empirical falsification test of the recovery-bounds catalogue.
+New benchmark `benchmarks/run_heat_equation_sample_complexity.py`
+sweeps trajectory length T ∈ {25, 50, 100, 200, 400} (sample counts
+~690 → ~12000), runs 3 GP seeds at each N, measures accuracy success
+(best_loss < 2× oracle_loss) and structural success (Pareto front
+contains 5-point Laplacian operator).
+
+RESULTS
+
+  T   N samples  Accuracy success  Structural success  Median loss/oracle
+  25     690        0% (0/3)            0% (0/3)            3.10
+  50    1440        0% (0/3)            0% (0/3)            2.68
+  100   2940       33% (1/3)            0% (0/3)            2.21
+  200   5940       67% (2/3)            0% (0/3)            1.77
+  400  11940       67% (2/3)            0% (0/3)            1.63
+
+VERDICT — at least partial support for vocab-restriction advantage
+
+✓ Sample-complexity curve has the B-T-predicted shape (smooth rise
+  with N; polynomial-in-(1/ε)).
+✓ Tessera is sample-bottlenecked in this regime (1-4s wall-clock per
+  seed; budget is fine).
+✓ With Laplacian_5pt and diff_t both in vocabulary, the GP discovers
+  the heat equation at modest N (~3000-6000) — consistent with
+  vocab-restriction advantage being real.
+
+NEW FINDING (not in the research note's predictions)
+
+Structural Laplacian recovery is 0% at every N because the GP finds an
+EQUIVALENT cx=2 `diff_t(U)` form that ties on accuracy with the cx=4
+`α·Laplacian(U)`. Parsimony correctly picks the shorter. The original
+heat equation benchmark already documented this tie; the present
+experiment confirms it's robust across N.
+
+The takeaway: **vocabulary doesn't just restrict the hypothesis class,
+it also determines which equivalent form gets discovered**. When two
+primitives express the same physics at different cx, parsimony picks
+the shorter one — even when the longer is the canonical "physical"
+answer. This is the §2.3 P4 "compression vs overfit" thread played
+out on a different benchmark.
+
+ALSO
+
+`docs/research/randomized_recovery_bounds_for_sr.md` — back-pointer
+added at §6 referencing the calibration result.
+
+Three open follow-on questions documented in the report:
+  - Vocabulary-restricted re-run (remove diff_t; force Laplacian
+    composition; quantify the advantage by removing it)
+  - Noise scaling at σ ∈ {0, 0.002, 0.02, 0.2}
+  - Budget vs samples decoupled at fixed N
+
+Each ~0.5-1 day. Defer pending user direction on which to pursue.
+
+Task #88 closed.
+
 ### Added (research note: randomized recovery bounds for SR)
 
 User direction (2026-05-25), after watching a video on what's

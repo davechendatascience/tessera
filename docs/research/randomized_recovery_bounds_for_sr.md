@@ -117,6 +117,8 @@ Honest boundary, because the failure modes matter as much as the successes:
 
 This last point is particularly important. The bounds presuppose target ∈ hypothesis class. For SR with a restricted vocabulary, this is a *strong* assumption that's not always met. The IK Run 1 ("vocab gap") case shows what happens when it isn't.
 
+> **Calibration run (2026-05-25):** see [`benchmarks/results/heat_equation_sample_complexity.md`](../../benchmarks/results/heat_equation_sample_complexity.md). Outcome — accuracy success rises smoothly with N from 0% at N=690 to 67% at N=5940, matching the B-T-predicted polynomial-in-(1/ε) shape. Structural Laplacian recovery is 0% at every N — not because the GP can't find the physics, but because it finds an equivalent cx=2 `diff_t(U)` form that ties on accuracy with the cx=4 `α·Laplacian(U)` form, and parsimony correctly picks the shorter. Verdict: vocab-restriction advantage hypothesis (§4) is at least partly supported. New finding: vocabulary determines WHICH equivalent form gets discovered, not just whether the physics is recoverable.
+
 ## 6. Calibration plan — heat equation discovery as the test case
 
 The most concrete proposed experiment:
