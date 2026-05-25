@@ -6,6 +6,73 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (research note: process-discovery SR — studies + innovations)
+
+User direction (2026-05-26): keep this work IN tessera. Want research
+half studies from developed theories and half innovation. Opal isn't
+there yet as a separate project.
+
+NEW docs/research/process_discovery_sr.md (~600 lines, 12 sections)
+
+THE FRAMEWORK
+
+The Sudoku critique extended into a coherent research direction:
+SR-as-currently-practiced fits points; SR-as-process-discovery infers
+the data-generating process. Pointwise loss is too easy to satisfy
+with overparameterized fits; statistical-property matching constrains
+behavior between observed points.
+
+HALF 1 — Survey of developed theories (§3-4)
+
+  SDE discovery        : SINDy-stochastic (Boninsegna et al), neural
+                         SDEs (Kidger), variational SDE (Li, Duvenaud),
+                         Bayesian SDE inference (Roberts, Stramer)
+  ABC                  : Pritchard 1999, Beaumont, Marin, Wood,
+                         Bayesian synthetic likelihood
+  Diffusion/score      : Hyvärinen score matching, DDPM (Ho et al),
+                         Song & Ermon, score-based SDE formulation
+  Method of moments    : Hansen GMM, indirect inference
+  PDE/ODE discovery    : SINDy, PDE-FIND, PINNs, Neural ODEs
+  Information-theoretic: Solomonoff, Levin, MDL (Rissanen),
+                         Algorithmic Statistics (Vereshchagin, Vitányi)
+  Causal discovery     : PC algorithm, GES, ANM, Pearl's do-calculus
+  Applied stochastic   : Itô calculus, Stratonovich, Hawkes, Lévy,
+                         McKean-Vlasov, SPDEs
+
+KOLMOGOROV ANCHOR — five contributions, ordered by relevance, with the
+**1974 Kolmogorov Structure Function** identified as the operational
+anchor (formalizes the structured-vs-random data decomposition the
+user's intuition was pointing at).
+
+HALF 2 — Tessera-specific innovations (§6)
+
+  6.1 Distributional-output trees (mu, sigma) — moderate cost
+  6.2 ABC-style fitness via summary statistics — high cost
+  6.3 MDL with explicit log-likelihood (structure-function-aware) — low cost
+  6.4 Causal direction priors via axis types — moderate cost
+  6.5 Counterfactual evaluation harness — moderate cost
+  6.6 Iterative strategy refinement based on residual diagnostics — moderate cost
+
+THE GAP — none in literature has all five (symbolic + SDE + ABC + MDL
++ causal). Pieces exist scattered; combination is novel and
+tessera-shaped (tessera already has axis-aware primitives, GP
+backbone, simplification infrastructure).
+
+THREE MVP SKETCHES (§7)
+
+  7.1 ABC-style scoring on existing GP        ~1 day
+  7.2 Distributional-output GP                ~1-2 weeks
+  7.3 Full process-discovery framework        ~3-6 months
+
+MVP 7.1 is the cheapest validation: does adding summary-statistic
+distance to scoring suppress Class B more than pointwise MSE alone?
+Empirical signal in 1 day of work.
+
+NOT PROMOTED TO PLANNED — stays in research until MVP 7.1 validates
+the direction with empirical signal.
+
+Task #95 closed.
+
 ### Added (closing synthesis research note — convergence and frontiers)
 
 User direction (2026-05-26): *"do a closing research note that

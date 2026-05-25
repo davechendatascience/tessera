@@ -46,6 +46,7 @@ Inside any individual doc, items are flagged with:
 | Read the rationale for the Dancing Links side track + implementation-budget tracking | [`research/dancing_links_for_sr.md`](research/dancing_links_for_sr.md) |
 | Map applied-math sample-complexity theorems (Boullé-Townsend, SINDy, RandNLA) to tessera sub-problems | [`research/randomized_recovery_bounds_for_sr.md`](research/randomized_recovery_bounds_for_sr.md) |
 | **READ FIRST** — closing synthesis: three-layer framework, four levers, class taxonomy, convergence point, composite-dynamics frontier | [`research/from_data_to_mechanism.md`](research/from_data_to_mechanism.md) |
+| Process-discovery SR direction — half survey (SDE, ABC, K-structure function, causal discovery), half tessera-specific innovations + MVP sketches | [`research/process_discovery_sr.md`](research/process_discovery_sr.md) |
 
 ## Organisational principles
 
