@@ -60,10 +60,12 @@ Inventory (current)
 |---|---|---|---|
 | abc_scoring.py | C1-refined (process_discovery_sr.md §6.2 + §7.1) | **FALSIFIED** at β ∈ {0.1, 1.0} on heat eq | 2026-05-26 |
 | causal_axes.py | C4 (process_discovery_sr.md §6.4) | **PARTIAL VALIDATION** on heat eq — eliminates Class A-temporal but doesn't boost Class C | 2026-05-26 |
+| mdl_scoring.py | C3 (process_discovery_sr.md §6.3) | **FALSIFIED** — calibration math right, effect below empirical noise; ad-hoc effectively equivalent | 2026-05-26 |
 
 Reports:
 - `benchmarks/results/heat_equation_abc_mvp71.md`
 - `benchmarks/results/heat_equation_causal_axes_mvp_c4.md`
+- `benchmarks/results/heat_equation_mdl_mvp_c3.md`
 
 To add a module: copy this checklist into the new module's docstring:
 

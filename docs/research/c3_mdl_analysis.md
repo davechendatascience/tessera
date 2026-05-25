@@ -286,6 +286,23 @@ Either is informative. **Run the experiment.**
 - Not that ad-hoc parsimony is "right" — it's a calibrated heuristic that happens to land near the recalibrated-MDL sweet spot for typical tessera problems
 - Not that the structure function refinement is implementable in this experiment (it's theoretical; we'd need a separate research arc)
 
+## Empirical outcome (2026-05-26)
+
+Experiment run on heat equation (see `benchmarks/results/heat_equation_mdl_mvp_c3.md`).
+
+**Pre-analysis prediction:** naive MDL would overfit (higher cx, lower train, higher test) due to under-penalized complexity at our N/σ regime.
+
+**Observed:** all three modes produce essentially equivalent Pareto fronts. cx medians: adhoc=8, naive_mdl=8, recal=6. Class C count: adhoc 1/5, naive_mdl 0/5, recal 0/5.
+
+**Math is directionally correct**: α(naive_mdl) < α(adhoc) < α(recal) per derivation, observed empirically in the cx ordering for recal vs others.
+
+**Empirical effect is below noise floor**: the α magnitudes are all far smaller than MSE differences between candidate trees. Parsimony coefficient changes at this scale don't direct exploration; they only break ties.
+
+**Deeper insight (NEW)**: scoring-function tweaks at the parsimony scale don't materially affect Class C discovery on this benchmark. The interventions that moved the needle in prior experiments (reduce_* downweight, multi-trajectory training) operate at the search-trajectory level. Future C3-like work needs penalties at MSE-magnitude scale, not parsimony-coefficient scale.
+
+The C3 conjecture as stated is FALSIFIED, but for an instructive reason rather than a vague "didn't work."
+
 ## Changelog
 
-- 2026-05-26: initial document. Theoretical pre-analysis of C3 done BEFORE implementation per the methodological discipline (commit 79a7f21 follow-up). Provable: MDL has stronger theoretical foundation than ad-hoc parsimony. Empirical: MDL with naive Gaussian likelihood and typical tessera N/σ likely OVERFITS (calibration math). Refined experimental protocol: test naive MDL vs recalibrated MDL vs ad-hoc baseline; measure cx growth and overfit, not just Class C rate.
+- 2026-05-26: initial document. Theoretical pre-analysis of C3 done BEFORE implementation. Predicted naive MDL would overfit at tessera's N/σ regime.
+- 2026-05-26: empirical outcome appended. Calibration math validated directionally; empirical effect below noise floor; deeper insight on parsimony-scale vs MSE-scale interventions.

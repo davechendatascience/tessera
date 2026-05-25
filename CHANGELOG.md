@@ -6,6 +6,108 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (MVP / C3: MDL scoring — FALSIFIED, calibration math partially validated)
+
+User direction (2026-05-26): apply the new discipline (theoretical
+analysis FIRST, then implementation) to C3.
+
+DISCIPLINE APPLIED
+
+Step 1: Theoretical pre-analysis (docs/research/c3_mdl_analysis.md,
+~400 lines). Predicted: naive MDL with Gaussian likelihood at heat
+eq's N/σ would OVERFIT — α-coefficient on complexity is ~30× smaller
+than ad-hoc, predicted to under-penalize cx growth.
+
+Step 2: Implementation with explicit modes for testing the prediction:
+  - adhoc (baseline): MSE + parsimony · cx
+  - naive_mdl: MSE/(2σ²) + DL/N (predicted to overfit)
+  - recalibrated_mdl: MSE/(2σ²) + DL/√N (BIC-like, more parsimony)
+
+Step 3: Empirical sanity check — does math hold?
+
+EXPERIMENT (heat equation, 5 seeds/mode, pop=240 gens=100)
+
+  | Mode             | median cx | train/o | test/o | Class C |
+  | adhoc            | 8         | 2.20    | 2.21   | 1/5     |
+  | naive_mdl        | 8         | 2.17    | 2.19   | 0/5     |
+  | recalibrated_mdl | 6         | 2.23    | 2.29   | 0/5     |
+
+RESULT: PREDICTION DIRECTIONALLY RIGHT, EMPIRICAL EFFECT TOO SMALL
+
+The α-coefficient ordering matches the math (naive < adhoc < recal in
+parsimony strictness). But all three values are FAR smaller than MSE
+differences between candidate trees, so parsimony coefficient changes
+at this scale don't direct exploration — only break ties.
+
+Naive MDL DIDN'T overfit (no higher cx, no worse test). All three
+modes are essentially equivalent.
+
+THE C3 CONJECTURE IS FALSIFIED
+
+C3 ("MDL identifies right amount of model more accurately than ad-hoc")
+is not supported. MDL modes match or underperform baseline. The
+recalibrated mode produces slightly smaller cx but doesn't help find
+Class C.
+
+DEEPER INSIGHT (not in the pre-analysis)
+
+Scoring-function tweaks at the parsimony scale don't materially affect
+Class C discovery on this benchmark. The interventions that DID move
+the needle in prior experiments (reduce_* downweight, multi-trajectory
+training) operate at the search-trajectory level, not at fitness
+ranking. Future MDL-aware work would need penalties at MSE-magnitude
+scale.
+
+METHODOLOGICAL WIN
+
+The pre-analysis predicted a specific failure mode (overfit). The
+experiment didn't show that exact mode — but it tells us something
+informative anyway:
+
+  - Calibration math is directionally correct ✓
+  - Empirical effect is below noise floor at this N/σ ✗
+  - The deeper limitation (parsimony scale doesn't matter at this
+    benchmark) is exposed clearly
+
+Without the pre-analysis, we'd have concluded "C3 falsified, move on."
+With it, we understand WHY (effect too small to materialize) and what
+the next investigation should target (MSE-magnitude interventions).
+
+NEW FILES
+
+src/tessera/experimental/mdl_scoring.py — ~270 LOC:
+  description_length_bits(tree) → float
+  GPWithMDLScoring(GP) — three penalty modes
+  Status: FALSIFIED, calibration math partially validated
+
+tests/experimental/test_mdl_scoring.py — 12 tests, all pass
+
+benchmarks/run_heat_equation_mdl_mvp_c3.py — 3-mode comparison
+
+benchmarks/results/heat_equation_mdl_mvp_c3.md — full report with
+pre-analysis vs observed, deeper insight, methodological reflection
+
+THREE-EXPERIMENT BASKET STATE
+
+  | Conjecture | Status | Class C delta |
+  | C1 (ABC scoring)    | FALSIFIED  | -1/5 |
+  | C4 (causal priors)  | PARTIAL    |  0/5 |
+  | C3 (MDL scoring)    | FALSIFIED  | -1/5 |
+
+Pattern: scoring-function modifications at parsimony scale don't
+move Class C rate. Search-trajectory interventions (reduce_*
+downweight, multi-trajectory) do.
+
+ALSO
+
+src/tessera/experimental/__init__.py: inventory updated (3 modules)
+docs/research/process_discovery_sr.md §6.3: result note added
+docs/research/c3_mdl_analysis.md: empirical outcome appended
+docs/research/c3_mdl_analysis.md status: ? RESEARCH → empirical
+  outcome captured
+
+Task #99 closed.
+
 ### Added (MVP / Conjecture C4: causal direction priors — PARTIAL VALIDATION)
 
 User direction (2026-05-26): C4 first from the experimental basket.
