@@ -6,6 +6,93 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (cross-benchmark validation of C5 on Feynman — PARTIAL/CONDITIONAL)
+
+User direction (2026-05-26): validate C5 across benchmarks before
+deploying as a default tool.
+
+EXPERIMENT
+
+8 Feynman targets × 3 seeds (24 total pairs). For each, run baseline
+GP, generate 4 input-perturbation counterfactuals (resample, resample
+alt, noisy inputs, noisier inputs), score each Pareto-front candidate,
+compare best-by-train vs best-by-cf on held-out TEST.
+
+RESULT — PARTIAL VALIDATION
+
+CF ranking and train-loss selection ALWAYS agreed (0/24 disagreements).
+CF didn't help and didn't hurt — fell back to train-loss-equivalent
+ordering.
+
+WHY — THE MECHANISM IS CONDITIONAL
+
+C5 on heat equation worked because the Pareto front sometimes
+contained Class B candidates: trees of shape `Laplacian/reduce_max`
+that fit TRAIN via trajectory-specific scalars. CF ranking penalized
+these.
+
+On Feynman:
+  - No noise → no opportunity for TRAIN-specific tricks
+  - No trajectory structure → no reduce_* analog
+  - Class B never appears on the front
+  - All candidates are "honest fits" (better or worse, but not tricks)
+
+Without natural-overfit candidates, CF ranking has nothing to
+discriminate; falls back to train-loss-equivalent.
+
+REFINED DEPLOYMENT RECOMMENDATION
+
+Earlier plan: deploy C5 as default tessera tool.
+
+Refined plan based on cross-benchmark:
+  - Ship C5 as an EXPLICIT OPT-IN tool (e.g., `tessera.search.
+    counterfactual_rank(front, perturbations)`)
+  - Document as conditional: "helps when Pareto front contains
+    TRAIN-specific overfit candidates; neutral otherwise"
+  - DON'T make it default best-by-train replacement, since for
+    Feynman-like benchmarks it adds nothing
+
+This is more honest than "default-on diagnostic". The mechanism is
+conditional on the benchmark having Class-B-style failure modes.
+
+DEEPER INSIGHT — CONDITIONAL HELPFULNESS PATTERN
+
+Refined cross-experiment pattern:
+
+  - Scoring-layer interventions (C1, C3, C6): no help on any
+    benchmark we've tested
+  - Post-hoc selection (C5): helps when benchmark has natural-overfit
+    failure modes; neutral otherwise
+  - Data-level interventions (reduce_* downweight, multi-trajectory):
+    help on dynamical-system benchmarks with TRAIN-specific structure
+
+**Tessera's tools have benchmark-class-dependent payoff.** No
+universal scoring/selection improvement.
+
+NEW FILE
+
+benchmarks/run_feynman_counterfactual_validation.py (~280 LOC)
+benchmarks/results/feynman_counterfactual_validation.md
+
+Task #102 closed.
+
+DECISION ON NEXT STEPS
+
+Given C5 is conditionally helpful (not universally), the original
+plan ("apply C5 as default tessera tool") is refined to "ship C5 as
+explicit opt-in with conditional-help documentation."
+
+This is a natural stopping point. The basket discipline has produced:
+  - 5 experiments completed
+  - 1 positive (C5, validated as selection-layer tool)
+  - 1 partial (C4, eliminates failure modes)
+  - 3 negatives (C1, C3, C6)
+  - Plus the structural pattern about which intervention layers
+    are productive
+
+The synthesis is ready to be written. C2 (distributional outputs)
+remains untested but is expensive and likely follows the pattern.
+
 ### Added (MVP / C5: counterfactual evaluation — FIRST VALIDATED-POSITIVE in basket)
 
 User direction (2026-05-26): apply discipline (pre-analysis FIRST) to C5.
