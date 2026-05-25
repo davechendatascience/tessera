@@ -177,6 +177,26 @@ The most likely outcome is the first (no signal). That's not a wasted experiment
 
 This is a sanity-check experiment, not a discovery experiment. The pre-analysis is the main intellectual contribution; the run validates or violates it.
 
+## Empirical outcome (2026-05-26)
+
+Experiment run on heat equation. Report: `benchmarks/results/heat_equation_adaptive_mvp_c6.md`.
+
+**Prediction validated exactly.**
+
+| | Baseline | Adaptive |
+|---|---|---|
+| Class C | 1/5 | 1/5 |
+| Class B | 1/5 | 1/5 |
+| Class A | 3/5 | 3/5 |
+| Bit-identical to baseline | — | 3/5 seeds |
+
+Adaptation triggered 10 events per run (every 10 gens for 100 gens) but produced essentially zero net effect on Pareto-front outcomes. Three of five seeds produced bit-for-bit identical results in baseline and adaptive modes.
+
+The diagnostic→corrective mapping problem played out exactly as predicted: even when adaptation triggered on meaningful front content (seeds 2028, 2030), the resulting weight adjustments did not redirect search toward Class C.
+
+This is the cleanest "validated-as-predicted" outcome of the four experiments: the pre-analysis correctly forecast that generic adaptation can't solve the mapping problem.
+
 ## Changelog
 
-- 2026-05-26: initial theoretical pre-analysis for C6. Predicts generic residual-driven adaptive mutation weights will produce results similar to baseline (no improvement, no significant degradation). The deeper insight: the diagnostic→corrective mapping problem is the real obstacle; generic adaptation lacks the mapping. Specific hand-engineered mappings essentially encode the answer.
+- 2026-05-26: initial theoretical pre-analysis for C6. Predicts generic residual-driven adaptive mutation weights will produce results similar to baseline.
+- 2026-05-26: empirical outcome appended. Prediction validated exactly: adaptive matches baseline on every key metric.

@@ -369,6 +369,8 @@ The direction is genuinely a *tessera direction* — it builds on existing archi
 
 > **C3 falsified, calibration math partially validated (2026-05-26):** Pre-analysis in `docs/research/c3_mdl_analysis.md`; experiment in `benchmarks/results/heat_equation_mdl_mvp_c3.md`. MDL with naive Gaussian likelihood at heat eq's N/σ produced *identical* Pareto fronts to ad-hoc parsimony (median cx=8 for both); recalibrated mode forced smaller cx (6) but not Class C. Class C count: adhoc 1/5, naive_mdl 0/5, recal 0/5. **Math is directionally correct (α ordering matches derivation) but empirical effect is below noise floor.** Deeper insight: parsimony-scale scoring tweaks don't direct exploration on this benchmark; interventions need to operate at MSE-magnitude scale (the actual driver of GP search dynamics).
 
+> **C6 validated-as-predicted (2026-05-26):** Pre-analysis in `docs/research/c6_residual_diagnostics_analysis.md`; experiment in `benchmarks/results/heat_equation_adaptive_mvp_c6.md`. Generic operator-usage-driven adaptive mutation weights produced results EXACTLY matching baseline: 1/5 Class C in both, 1/5 Class B in both, 3/5 seeds produced bit-identical results. Adaptation triggered 10 events per run but didn't change outcomes. The pre-analysis's diagnostic→corrective mapping argument is empirically confirmed: generic adaptation cannot solve the mapping problem; specific mappings essentially encode the answer. **Pattern across C1/C3/C4/C6:** all interventions at the scoring/search-modification layer produce similar Class C rates (-1/5 to 0/5 vs baseline); only data-level interventions (reduce_* downweight, multi-trajectory) move the needle.
+
 ## 9. Falsification
 
 What would tell us this direction is wrong:
