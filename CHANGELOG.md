@@ -6,6 +6,69 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Mode-1 minimal experiment — parsimony=0 on heat equation)
+
+User direction (2026-05-26): test whether removing parsimony pressure
+exposes the α·Laplacian candidate on the Pareto front alongside
+diff_t-style candidates. Hypothesis under "Mode 1" architecture
+(score-no-parsimony-trade-unless-certified-compression):
+
+> Laplacian candidates exist in the search but get parsimony-
+> suppressed in favor of shorter equivalent diff_t shapes.
+
+CLEAN NEGATIVE RESULT FOR MODE 1 ALONE
+
+5 seeds × 2 settings (default parsimony 3.2e-08 vs zero parsimony).
+Both settings produce essentially identical Pareto fronts. **0/5
+seeds find Laplacian-shape candidates in either setting.** The
+hypothesis was wrong.
+
+WHY — the actual situation
+
+The GP IS finding diff_t-LIKE operators, spelled as raw 2-atom
+Measure2D rather than as the named factory:
+
+  M2D[1·(0,0) + -1·(1,0)](U) = U[t,x] − U[t+1,x]
+  (a 1-step backward time difference; loss/oracle = 2.32 at cx=2)
+
+What's NOT found is the 3-atom Laplacian template
+M2D[+1·(0,-1) + -2·(0,0) + +1·(0,+1)](U). Random Measure2D atom
+generation samples 2-atom (difference-operator) shapes freely but
+the specific 3-atom Laplacian template requires a multi-step
+composition that random mutation doesn't reach in 40 generations.
+
+So removing parsimony doesn't expose the Laplacian because IT'S NOT
+IN THE SEARCH to begin with. Scoring can only choose among candidates
+search produces.
+
+IMPLICATIONS FOR THE TWO-MODE BRAINSTORM
+
+  - Mode 1 (compression-aware scoring): wrong first investment for
+    this benchmark. Scoring fixes apply to existing candidates.
+  - Mode 2 (derivation grammars / template biases): necessary. The
+    cheapest mode-2-flavoured move: have random_tree(enable_2d=True)
+    sample from factory-registered Measure2D templates
+    (Laplacian_5pt, diff_t, diff_x) with non-zero probability,
+    alongside random atom generation. Predicted: structural recovery
+    0/5 → ≥3/5 seeds at same budget.
+
+This is the diagnostic value of the experiment — even though "no
+change" is the headline, it NARROWED the problem from scoring to
+search. The optimizer ceiling we identified yesterday is the binding
+constraint here, and it's at the search reach level (Measure2D
+template generation), not at the scoring level.
+
+NEW BENCHMARK FILES
+
+benchmarks/run_heat_equation_mode1_parsimony_zero.py — the minimal
+experiment, ~250 LOC. Reuses simulate_heat_1d via sys.path import
+from the existing benchmark.
+
+benchmarks/results/heat_equation_mode1_parsimony_zero.md — full
+report with verdict, per-seed details, and next-steps articulation.
+
+Task #89 closed (clean falsification of Mode-1-alone hypothesis).
+
 ### Added (heat equation sample-complexity calibration — §6 of recovery-bounds note)
 
 First empirical falsification test of the recovery-bounds catalogue.
