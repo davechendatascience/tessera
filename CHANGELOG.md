@@ -6,6 +6,99 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (CAS simplification fallback via sympy — closes structural-critique gap)
+
+User direction (2026-05-26): after the PySR-vs-tessera structural
+critique, build CAS-based simplification fallback to close the
+biggest universal-improvement gap.
+
+DESIGN — safe, bounded, opt-in
+
+Module: src/tessera/expression/simplify/cas_fallback.py (~350 LOC)
+
+Key safety mechanisms:
+  1. Predicate filter (is_worth_cas_pass): skips polynomial / pure-
+     algebraic trees that the hand-rolled simplifier already handles.
+     ~3μs per call.
+  2. Cache by tree string: pareto-front candidates persist across
+     generations, so most calls are cache hits.
+  3. Numerical verification: after round-trip, evaluate both original
+     and simplified at random samples. Reject if outputs diverge
+     beyond atol — protects against semantic mismatch with tessera's
+     protected ops (sqrt/log/exp/pow).
+  4. Complexity check: reject if simplified has higher cx than original.
+  5. Backend fallback: tries symengine first (10-100× faster); falls
+     back to sympy if symengine isn't installed; degrades to no-op
+     if neither.
+
+Coverage:
+  - Trig identities (sin²+cos²=1) ✓
+  - Rational cancellation ((2x)/x → 2) ✓
+  - Multi-variable cancellation ((xy)/(xz) → y/z) ✓
+  - log(exp(x))=x edge case: doesn't simplify due to tessera's
+    protected log (log(|x|), not log(x)) — known semantics gap
+  - Polynomial trees: predicate correctly skips, no false work
+
+API:
+  cas_simplify(tree, *, feature_names, verify_samples, atol)
+  simplify_front_with_cas(front, *, feature_names, ...)
+  is_worth_cas_pass(tree) -> bool
+  cas_backend() -> Optional[str]
+  clear_cache(), cache_size()
+
+PERFORMANCE — bounded overhead
+
+  Per-call latency (post-warmup):
+    is_worth_cas_pass:                    3 μs
+    cas_simplify (predicate skip):         3 μs
+    cas_simplify (cache hit):             <1 μs
+    cas_simplify (full round-trip+verify): 1-10 ms
+
+Extrapolated to typical GP runs (pop=200, n_gens=100, ~30-60s):
+  Per-gen CAS cost: ~25 ms
+  Per-run CAS cost: ~2.5 s total
+  **Overhead: <10% on 30s runs, <5% on 60s runs**
+
+The earlier "0.060s sympy overhead = 22% of GP time" finding was
+on a 0.27s GP run (target trivially solvable); per-call latency
+profile confirms bounded cost at realistic scales.
+
+NEW FILES
+
+src/tessera/expression/simplify/cas_fallback.py (~350 LOC)
+tests/expression/test_simplify_cas.py (17 tests, all pass)
+benchmarks/run_cas_simplification_validation.py
+benchmarks/results/cas_simplification_validation.md
+
+src/tessera/expression/simplify/__init__.py: re-exports of
+  cas_simplify, simplify_front_with_cas, is_worth_cas_pass, cas_backend
+
+INTEGRATION STATUS
+
+Opt-in tool, not yet wired into GP loop. To use:
+  from tessera.expression.simplify import simplify_front_with_cas
+  front = gp.run(env, y, feature_names=names)
+  front = simplify_front_with_cas(front, feature_names=names)
+
+If/when we want CAS to influence cx during search (so parsimony
+sees simplified trees), would call every K generations inside
+run(). That's a follow-on; current ship is the safe opt-in version.
+
+VERDICT
+
+The structural-critique gap-close is DELIVERED:
+  ✓ tessera now has CAS-quality simplification available
+  ✓ Bounded overhead (verified per-call profiling)
+  ✓ Numerical verification prevents semantic-mismatch bugs
+  ✓ Predicate + caching keeps it efficient
+  ✓ 583 broader tests + 17 new = 600 passing, 2 pre-existing skips
+
+This is one of the universal improvements PySR has and tessera
+previously didn't. Other gaps (BFGS constant opt, multi-population
+migration) remain but are smaller individual wins.
+
+Task #104 closed.
+
 ### Added (C2 pre-analysis — basket complete with 5 experiments + 1 analysis-only)
 
 User direction (2026-05-26): write C2 pre-analysis to complete the

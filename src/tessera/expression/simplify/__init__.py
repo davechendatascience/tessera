@@ -50,6 +50,10 @@ monotone simplifier — that's why these pipelines are safe to chain.
 from .core import simplify
 from .ac import simplify_ac
 from .polynomial import simplify_polynomial
+from .cas_fallback import (
+    cas_simplify, simplify_front_with_cas,
+    is_worth_cas_pass, get_backend as cas_backend,
+)
 
 
 def simplify_canonical(node):
@@ -76,4 +80,6 @@ def simplify_full(node):
 __all__ = [
     "simplify", "simplify_ac", "simplify_polynomial",
     "simplify_canonical", "simplify_full",
+    "cas_simplify", "simplify_front_with_cas",
+    "is_worth_cas_pass", "cas_backend",
 ]
