@@ -152,3 +152,50 @@ def test_materialize_does_not_depend_on_search():
     assert not search_imports, (
         f"materialize must not import from search; found {search_imports}"
     )
+
+
+def test_no_production_code_imports_experimental():
+    """`tessera.experimental.*` is a one-way subpackage: experimental
+    code may import from anywhere (production layers are upstream),
+    but no production code may import from experimental.
+
+    See `tessera.experimental.__init__` docstring for the discipline.
+    The motivation: experimental code implements untested conjectures
+    from research notes. If production code depended on it, an
+    experimental module's removal or graduation would break the rest
+    of tessera.
+    """
+    deps = _collect_deps()
+    violations = []
+    for mod, imports in deps.items():
+        # experimental code can import experimental — that's fine
+        if mod.startswith("tessera.experimental"):
+            continue
+        for imp in imports:
+            if imp.startswith("tessera.experimental"):
+                violations.append((mod, imp))
+    assert not violations, (
+        f"production code imports from tessera.experimental (forbidden):\n"
+        + "\n".join(f"  {a} imports {b}" for a, b in violations)
+        + "\nSee tessera/experimental/__init__.py for the discipline."
+    )
+
+
+def test_experimental_subpackage_exists():
+    """Smoke test: the experimental subpackage exists and has a
+    docstring explaining the discipline.
+
+    Documenting the discipline at the package level (rather than only
+    in `docs/`) means anyone who lands inside the code via tooling
+    (LSP, IDE) sees the contract immediately.
+    """
+    import tessera.experimental
+    doc = tessera.experimental.__doc__
+    assert doc is not None, "tessera.experimental needs a module docstring"
+    assert "research-note conjectures" in doc, (
+        "tessera.experimental docstring should explain it implements "
+        "research-note conjectures"
+    )
+    assert "graduates" in doc or "graduation" in doc, (
+        "tessera.experimental docstring should describe graduation lifecycle"
+    )

@@ -6,6 +6,86 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (tessera.experimental subpackage — discipline for unvalidated conjectures)
+
+User direction (2026-05-26): novel conjectures need to be made
+experimental first, with empirical validation as the criterion for
+graduation to production code.
+
+NEW SUBPACKAGE
+
+src/tessera/experimental/__init__.py — empty scaffold (no modules yet)
+plus extensive docstring articulating the discipline:
+
+  1. Every module here implements at least one named research-note
+     conjecture, with provenance + status + graduation criterion in
+     its own docstring.
+
+  2. No production code imports from tessera.experimental.
+     Enforced by tests/test_dependency_structure.py.
+
+  3. Modules carry their own audit metadata (status, last evaluation,
+     graduation/removal criteria).
+
+  4. Graduation is a discrete commit that moves code to its
+     production home AND updates the research note marking the
+     conjecture validated.
+
+  5. 6-month audit policy: stale experimental modules trigger a
+     re-evaluation decision (extend, graduate, or remove).
+
+The lifecycle mirrors docs/:
+
+  docs/research/X.md          tessera/experimental/X.py
+    (conjecture)        ↔        (implementation)
+          ↓ validated                    ↓ validated
+  docs/planned/roadmap.md §N   tessera/<home>/X.py
+          ↓ shipped                      ↓ shipped
+  docs/shipped/X.md            tessera/<home>/X.py + tests
+
+NEW DEPENDENCY-STRUCTURE TESTS
+
+tests/test_dependency_structure.py adds two checks:
+
+  test_no_production_code_imports_experimental — enforces the one-way
+    dependency: experimental → anywhere allowed, anywhere → experimental
+    forbidden.
+
+  test_experimental_subpackage_exists — smoke test that the subpackage
+    has the required docstring articulating the discipline.
+
+Full test suite (5/5 dependency-structure tests) passes.
+
+NAMED-BUT-NOT-IMPLEMENTED CONJECTURES (placeholders in __init__.py)
+
+  C1: ABC-style summary-statistics scoring suppresses Class B
+  C2: Distributional-output trees capture stochastic dynamics
+  C3: MDL with explicit log-likelihood beats ad-hoc parsimony
+  C4: Causal direction priors at tree-level reduce search space
+  C5: Counterfactual evaluation suppresses Class B
+  C6: Iterative strategy refinement via residual diagnostics
+
+Each conjecture has a designated module name; adding the module is a
+commit that names the experiment. Currently all six are placeholders.
+
+ALSO
+
+docs/research/process_discovery_sr.md §7: reference added pointing at
+the experimental subpackage as the implementation home.
+
+Task #96 closed.
+
+LIFECYCLE STATE
+
+  research/ : 17 notes
+  planned/  : same
+  src/tessera/experimental/ : NEW subpackage (1 file, scaffold only)
+  tests/ : +2 dependency tests
+
+This commit establishes the discipline. No experiment is implemented
+yet. The next commit (when chosen) would implement MVP 7.1 from the
+process-discovery research note as the first occupant.
+
 ### Added (research note: process-discovery SR — studies + innovations)
 
 User direction (2026-05-26): keep this work IN tessera. Want research

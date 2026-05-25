@@ -305,6 +305,8 @@ Why useful: makes the search adaptive. The GP can detect that its current model 
 
 Implementation cost: ~moderate. Each diagnostic is small; the refinement logic is where the design work is.
 
+> **Experimental home (added 2026-05-26):** implementations of the conjectures in this note live in `tessera.experimental.*`. Each module cites the specific conjecture (C1, C2, ...) and declares its graduation/removal criteria. See `tessera/experimental/__init__.py` for the discipline. No production code may import from there until a conjecture graduates with empirical evidence.
+
 ## 7. MVP sketches (three increasing scope levels)
 
 To validate the direction without committing to the full architecture, three progressively-larger experiments.
