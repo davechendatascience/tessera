@@ -6,6 +6,106 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (paired diagnostic: TRAIN/TEST + compute scaling on heat eq)
+
+User direction (2026-05-26): test underfit-vs-overfit via TRAIN/TEST
+split, AND compute-scaling via budget sweep, in a single experiment.
+Same data path so the diagnostics interact properly.
+
+NEW BENCHMARK
+
+benchmarks/run_heat_equation_traintest_computescale.py:
+  - Simulates TWO trajectories with different ICs (ic_seed 100, 200)
+  - 4 compute budgets: (60×25, 120×50, 240×100, 360×120) — 28× scaling
+  - 3 seeds per budget
+  - Reports: train_loss, test_loss, best-by-test_loss per run
+  - Verdict logic: classifies as overfit / underfit-fixable / search-limited / solved
+
+12 runs total in ~100s wall-clock.
+
+HEADLINE FINDING — THE LAPLACIAN TEMPLATE IS DISCOVERED, JUST IN OVERFIT WRAPPING
+
+2 of 12 runs (budgets 6000 and 43200, seed 2026 both) produced trees
+containing the canonical 5-point Laplacian atom pattern:
+
+  M2D[1·(0,-1) + -2·(0,0) + 1·(0,1)](U)
+
+This corrects yesterday's "0/5 structural recovery" finding —
+DETECTION FUNCTION BUG. The string "laplacian" doesn't appear in the
+M2D atom notation; the pattern is `1·(...) + -2·(...) + 1·(...)`.
+The previous experiment did find the template; the detector missed it.
+
+But both Laplacian-finding runs CATASTROPHICALLY OVERFIT:
+
+  6000  seed=2026  train=1.08x oracle  test=4.17x  oracle  (3.9x  gap)
+  43200 seed=2026  train=1.04x oracle  test=31.79x oracle  (30.7x gap)
+
+The tree shape: `(Laplacian(U) / reduce_max(...))` and
+`(Laplacian(U) / reduce_std(...))`. The Laplacian is divided by a
+TRAIN-specific scalar (max/std reduced over the trajectory). On TEST
+the divisor is different (recomputed on TEST data), and prediction
+blows up.
+
+THREE CLASSES OF CANDIDATES IDENTIFIED
+
+  Class A: diff-style 2-atom M2D, no reductions
+           train ≈ test ≈ 2x oracle; generalizes cleanly
+           (the diff_t-tautology family from earlier discussion)
+
+  Class B: 3-atom Laplacian template wrapped in reduce_*
+           train ≈ 1x oracle; test 4-32x oracle; natural-sense overfit
+           (2 of 12 runs)
+
+  Class C: clean `c · Laplacian(U)` (the canonical answer)
+           train ≈ test ≈ 1x oracle if found
+           **NEVER OBSERVED in any of 12 runs**
+
+The GP can find the Laplacian TEMPLATE at sufficient budget but
+never converges to the canonical `constant × template` shape. It
+prefers `template / reduce_*` shapes which are TRAIN-specific.
+
+CORRECTED DIAGNOSIS (auto-verdict was incomplete)
+
+  - NOT underfit-fixable-by-compute: median train/oracle flat (2.34 → 2.15
+    across 28x compute)
+  - NOT pure search limit: Laplacian template IS reached at 6000+ budget
+  - NOT generic overfit: most candidates (Class A) have train ≈ test
+  - IS Class B overfit AND Class C absence: GP finds the template but
+    only in non-generalizable wrappers, never produces clean form
+
+This is the cleanest empirical instance of the user's "natural-sense
+overfit" reframe from yesterday: argument tweaks (the divisor) to
+make data fit while making mechanism non-portable.
+
+IMPLICATIONS FOR THE MODE-1/MODE-2 BRAINSTORM
+
+  - Mode 1 (compression-aware scoring) wouldn't help here. Class B
+    has LOWER train loss than Class A. Removing parsimony makes
+    Class B PREFERRED, not Class C selectable.
+  - Mode 2 (derivation grammars) WOULD help: a "multiply template by
+    Const" grammar would convert Class B → Class C systematically.
+  - Regularization against `reduce_*` operators is the SIMPLEST move:
+    lower their mutation weights when target is per-sample, not
+    per-trajectory. Doesn't need full Mode 1+2 redesign.
+
+THREE PRIORITY-ORDERED NEXT MOVES
+
+  1. Regularize `reduce_*` mutation weight        ~30 LOC, half day
+  2. Mode 2 grammar: wrap-template-in-const       ~half day
+  3. Cross-validation scoring instead of train    ~1 day
+
+The first is cheapest and directly addresses the diagnostic. If
+Class C appears after this change, the experiment was a successful
+narrowing.
+
+ALSO
+
+benchmarks/results/heat_equation_traintest_computescale.md (NEW) —
+full report with three-class taxonomy, compute scaling table,
+corrected diagnosis, and prioritized next moves.
+
+Task #90 closed (clean experimental finding; narrowed the problem).
+
 ### Added (Mode-1 minimal experiment — parsimony=0 on heat equation)
 
 User direction (2026-05-26): test whether removing parsimony pressure
