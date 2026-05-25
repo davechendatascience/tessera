@@ -45,7 +45,7 @@ import numpy as np
 
 from tessera.expression.cache import FunctionalCache
 from tessera.expression.tree import Node, complexity
-from tessera.expression.simplify import simplify_canonical as simplify
+from tessera.expression.simplify import simplify_full as simplify
 from tessera.expression.interval import (
     interval_evaluate, env_intervals_from_arrays,
 )
