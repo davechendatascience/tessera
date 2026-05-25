@@ -48,6 +48,7 @@ Inside any individual doc, items are flagged with:
 | **READ FIRST** — closing synthesis: three-layer framework, four levers, class taxonomy, convergence point, composite-dynamics frontier | [`research/from_data_to_mechanism.md`](research/from_data_to_mechanism.md) |
 | Process-discovery SR direction — half survey (SDE, ABC, K-structure function, causal discovery), half tessera-specific innovations + MVP sketches | [`research/process_discovery_sr.md`](research/process_discovery_sr.md) |
 | C3 theoretical pre-analysis: MDL vs ad-hoc parsimony — calibration math predicts MDL overfits at tessera's N/σ; experiment validates math, not the original conjecture | [`research/c3_mdl_analysis.md`](research/c3_mdl_analysis.md) |
+| C6 theoretical pre-analysis: residual-diagnostics-driven adaptive search — mapping problem makes generic adaptation unlikely to help; specific mappings are hand-engineering | [`research/c6_residual_diagnostics_analysis.md`](research/c6_residual_diagnostics_analysis.md) |
 
 ## Organisational principles
 
