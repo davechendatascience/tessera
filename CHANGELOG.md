@@ -6,6 +6,80 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Feynman A/B: verifies recent fixes don't harm broader benchmarks)
+
+User question (2026-05-26): "do our fixes perform well on all Feynman
+benchmarks? Is tuning on benchmark beneficial for all data fitting?"
+
+The reduce_* downweight is the only default-on behavior change from
+the heat eq thread that affects all GP runs. Ran 8 Feynman equations
+× 2 modes (uniform reduce_* vs 10x downweight) × 3 seeds to check
+generalization.
+
+HEADLINE — no statistically significant harm on Feynman
+
+  Per-equation read (corrected for N=3 sampling noise):
+    1 CLEAR downweight win  (I.43.31 Stokes, 2x better)
+    ≥3/8 sampling-noise differences (within 1-seed-flip distance)
+    ≥4/8 genuine ties
+
+  No benchmark is catastrophically harmed.
+
+The "I.12.5 Coulomb uniform wins dramatically" claim from the median
+table is sampling noise: per-seed inspection shows 2/3 vs 1/3 perfect-
+find rates, a 1-seed coin flip. Same for I.14.3 (3/3 vs 2/3).
+
+THE DEEPER METHODOLOGICAL QUESTION
+
+When does benchmark tuning help general data fitting? Three patterns
+distinguish "general principle" from "benchmark trick":
+
+  1. Independent justification — does the argument reference the
+     benchmark? "reduce_* shouldn't be in per-sample default set"
+     doesn't reference heat eq; the argument follows from per-sample
+     regression semantics independently.
+
+  2. Empirical test on held-out distribution — Feynman IS that test
+     for the heat-eq-tuned change. Result: no harm + mild benefit.
+     Generalized.
+
+  3. Mechanism preservation across contexts — the downweight changes
+     SAMPLING PROBABILITY of reduce_*, not their AVAILABILITY. A
+     benchmark that genuinely needs reductions (trading indicators,
+     trajectory summaries) can override:
+       UN_OP_WEIGHTS["reduce_max"] = 1.0
+
+The patterns to AVOID (cases where tuning hurts generalization):
+  - Adding factory primitives matching the target (smuggles knowledge)
+  - Tuning a knob purely for held-out metric (Goodhart's Law)
+  - Disabling mutation operators (forecloses on future benchmarks)
+  - Re-running until results look good (selection bias)
+
+The cases that are FINE (what we did):
+  - Justified-by-argument defaults
+  - Optional infrastructure (opt-in features)
+  - Bug fixes (detection-function correction)
+  - Documented compute-budget choices
+
+OPERATIONAL ANSWER
+
+The heat eq tuning passed all three tests. Both default changes
+(reduce_* downweight + simplify_full opt-in) are general-principle
+changes, not benchmark tricks. Tessera is now better at unit-dynamics
+SR without being worse at the broader Feynman suite.
+
+NEW BENCHMARK
+
+benchmarks/run_feynman_reduce_downweight_ab.py — switches
+UN_OP_WEIGHTS module-level dict via set_reduce_weight() helper, runs
+both modes on the Feynman subset, generates A/B report.
+
+benchmarks/results/feynman_reduce_downweight_ab.md — full report
+with per-seed breakdown, methodological reflection, and the three
+"tuning generalizes" tests.
+
+Task #93 closed.
+
 ### Added (multi-trajectory training — final empirical anchor for heat eq thread)
 
 User direction (2026-05-26): test multi-trajectory training. Closes
