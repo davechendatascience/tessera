@@ -45,6 +45,7 @@ Inside any individual doc, items are flagged with:
 | Compute analytical Δloss for symbolic mutations (Knuth + FMM + boosting connections) | [`research/analytical_delta_loss.md`](research/analytical_delta_loss.md) |
 | Read the rationale for the Dancing Links side track + implementation-budget tracking | [`research/dancing_links_for_sr.md`](research/dancing_links_for_sr.md) |
 | Map applied-math sample-complexity theorems (Boullé-Townsend, SINDy, RandNLA) to tessera sub-problems | [`research/randomized_recovery_bounds_for_sr.md`](research/randomized_recovery_bounds_for_sr.md) |
+| **READ FIRST** — closing synthesis: three-layer framework, four levers, class taxonomy, convergence point, composite-dynamics frontier | [`research/from_data_to_mechanism.md`](research/from_data_to_mechanism.md) |
 
 ## Organisational principles
 

@@ -6,6 +6,99 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (closing synthesis research note — convergence and frontiers)
+
+User direction (2026-05-26): *"do a closing research note that
+synthesizes the full session's findings."*
+
+NEW docs/research/from_data_to_mechanism.md (~500 lines, 12 sections)
+
+Ties together the multi-day arc from analytical Δloss (§2.3 opener)
+through heat-equation discovery to the composite-dynamics frontier.
+
+THE FRAMEWORK ARTICULATED
+
+  1. Three-layer model: data / equation / mechanism. The "perfect
+     information data fitting game" covers layer 1→2; layer 2→3 (the
+     equation-to-mechanism gap) is the scientific question and is
+     NOT solved by data fit alone.
+
+  2. Natural-overfit reframe (user's pivotal insight): epistemic
+     overfit is when argument tweaks make data fit while the model
+     isn't mechanism. Historical analogs: epicycles, aether,
+     phlogiston. SR analog: Class B `(template / reduce_*)` —
+     trajectory-specific tweaks around real templates.
+
+  3. Four levers of unit-dynamics SR (empirically validated):
+       - Vocabulary completeness
+       - Scoring (parsimony, MDL, simplification)
+       - Search bias (mutation operator weights)
+       - Training data structure (multi-trajectory)
+     Each moves the needle; combined enables ~33% mechanism-discovery
+     rate; not yet reliable.
+
+  4. Class taxonomy (A/B/C):
+       A: generic diff-style tautology — generalizes, no mechanism
+       B: template / reduce_* — TRAIN-perfect, TEST-disastrous, natural-overfit
+       C: clean Const · Template — mechanism captured, train≈test≈oracle
+     The taxonomy reframes "did we find a low-loss tree?" into
+     "what class did we find?" — Class A beats Class B on
+     generalization despite higher train_loss.
+
+  5. Methodological discipline for legitimate tuning (three tests):
+       a. Independent justification (argument doesn't reference benchmark)
+       b. Held-out empirical test (Feynman A/B passed for our changes)
+       c. Mechanism preservation (capability stays available; only prior changes)
+     The patterns to AVOID and the patterns that are FINE, with examples.
+
+THE CONVERGENCE POINT
+
+Unit-dynamics SR is now in a definable state:
+  - The mechanism IS discoverable (heat eq Class C at cx=4 with α=0.05)
+  - Reliability is ~33% with all four levers tuned
+  - Diagnostic discipline (class taxonomy + TRAIN/TEST) is in place
+  - Methodological discipline (three tuning tests) is in place
+
+Further improvements would be incremental — diminishing returns
+within the same architectural envelope.
+
+THE FRONTIER NAMED
+
+Composite dynamics (heat + Navier-Stokes, reaction-diffusion,
+Maxwell coupled PDEs) is the natural next direction. Requires:
+  - Multi-output GP (coupled equation systems)
+  - Operator algebra (linear combination, commutators)
+  - Conservation constraints as priors
+  - Cross-equation cohesion in coupling terms
+
+This is a different architecture, not an extension. Tessera-as-
+unit-discoverer is a complete product; tessera-as-composite-
+discoverer would be a new project.
+
+READING ORDER (for future readers)
+
+The note includes a canonical reading order across all session
+artifacts (10 documents). New contributors should read:
+  §1-3 of from_data_to_mechanism.md for framework
+  §4-6 for the empirical work
+  §7-9 for verification
+  §10-12 for scope and falsification anchors
+
+ALSO
+
+docs/README.md: nav entry added with **READ FIRST** marker.
+
+Task #94 closed.
+
+LIFECYCLE STATE post-commit
+
+  research/ : 16 notes (this one ties them together)
+  planned/  : same; no implicit promotion from this note
+  benchmarks/results/ : 4 new from this session
+  CHANGELOG.md : extensive entries across the session
+
+This commit closes the session arc.
+
 ### Added (Feynman A/B: verifies recent fixes don't harm broader benchmarks)
 
 User question (2026-05-26): "do our fixes perform well on all Feynman
