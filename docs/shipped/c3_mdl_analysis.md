@@ -1,5 +1,7 @@
 # C3 theoretical pre-analysis: MDL with explicit log-likelihood vs ad-hoc parsimony
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. **FALSIFIED** via `src/tessera/experimental/mdl_scoring.py` (calibration math right, effect below empirical noise floor); benchmark at `benchmarks/results/heat_equation_mdl_mvp_c3.md`. Pre-analysis predicted the most likely outcome; experiment confirmed.
+
 **Status:** ? RESEARCH — theoretical analysis BEFORE empirical test, per the methodological discipline (commit 79a7f21 follow-up).
 
 **Provenance:** user (2026-05-26), after C1 falsification and C4 partial validation:

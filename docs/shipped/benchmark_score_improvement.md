@@ -1,5 +1,7 @@
 # Research note: improving tessera's scores on existing SR benchmarks
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. CAS simplification fallback **SHIPPED** (`src/tessera/expression/simplify/cas_fallback.py`); `simplify_full` is now the GP default per the chain-comparison benchmark (`benchmarks/results/simplification_chain_comparison.md`). Broader Feynman partial-tier improvements remain open and now scope into the methodology workbench direction.
+
 **Status:** ? RESEARCH. Open exploration; not committed to ship. Parallel direction to [`high_dim_symbolic_regression.md`](high_dim_symbolic_regression.md).
 
 **Provenance:** the 2026-05-24 extended Feynman benchmark (`benchmarks/results/feynman_extended.md`) gave 9 exact / 14 partial / 7 failed out of 30 equations. The user asked: *"benchmarks show the basic ability for our SR's system identification. The Feynman benchmark still has some missed points — I don't know if it's purely unattainable or our own fault."* This doc disentangles the failure modes.

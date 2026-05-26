@@ -1,5 +1,7 @@
 # Research note: analytical Δloss for symbolic mutations
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. Sufficient-statistics polish **SHIPPED** in `src/tessera/search/sufficient_stats.py`; A/B benchmark recorded in `benchmarks/results/feynman_sufficient_stats.md`. The narrow analytical Δloss for polynomial-basis mutations is delivered; the broader research direction (Δloss for general mutation classes) remains open but is not blocking.
+
 **Status:** ? RESEARCH. Live thinking; partial answers exist in the literature, restricted to mutation classes that don't cover general SR but DO cover useful subspaces.
 
 **Provenance:** user (2026-05-24): *"Is there a way to do the calculus of loss impact of incremental moves? Since these are all symbols. We can calculate the analytic impact we can save compute in some way to make it utterly O(1)? Is there any research on this? I would imagine Knuth would have something similar."*

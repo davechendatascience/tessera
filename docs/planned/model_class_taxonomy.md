@@ -1,5 +1,7 @@
 # Research note: model class as a first-class concept in SR
 
+**Status update (2026-05-26 → `docs/planned/`):** Moved from `docs/research/`. Stage 1.5 schema retrofit **SHIPPED** (ModelClass enum, `model_class` field per system, `target_form()` method, algebraic canonical added, PDE grid metadata populated). Design contract continues to inform ongoing Stage 5 identification pipeline + Stage 6 multi-objective scoring.
+
 **Status:** STAGE 0.5 design fix. Extends the Stage 0 workbench design note (`methodology_workbench_and_library.md`) with explicit model-class taxonomy. This note is the design contract for the Stage 1 update — code changes must reference back to it.
 
 **Provenance:** user (2026-05-26), surfaced while reviewing Stage 1 tests:

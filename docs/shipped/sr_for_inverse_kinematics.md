@@ -1,5 +1,7 @@
 # Research note: symbolic regression for inverse kinematics in simulation
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. 3-DoF planar IK benchmark **SHIPPED** at `benchmarks/results/ik_planar_3dof.md`; `atan2 / acos / asin` primitives added to vocabulary. Later session-level reframing (the IK conversation of 2026-05-26) concluded that proper IK libraries (Stanford ASL frax, TracIK, Pinocchio) are the right tool for IK; tessera's IK benchmark stays as a documented case of "what SR shouldn't be used for."
+
 **Status:** ? RESEARCH. Open exploration; not committed to ship. New direction proposed 2026-05-24.
 
 **Provenance:** the user (a robotics vision researcher) asked: *"I want to add a benchmark test that might be compelling. We can try to solve for inverse kinematics of robots in simulation using a physics engine. I wonder how SR fares with simulation?"* This doc scopes the question into a concrete research program.

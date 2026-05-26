@@ -1,5 +1,7 @@
 # C6 theoretical pre-analysis: iterative strategy refinement via residual diagnostics
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. **VALIDATED-AS-PREDICTED-NEGATIVE** via `src/tessera/experimental/adaptive_search.py` — pre-analysis predicted adaptive mutation weights would not help on heat eq; experiment confirmed (`benchmarks/results/heat_equation_adaptive_mvp_c6.md`). Module preserved; conjecture's "iterative residual diagnostics" framing partially reused in the Stage 5 identification pipeline.
+
 **Status:** ? RESEARCH — theoretical analysis BEFORE implementation, per the methodological discipline established in commits ec98f12 / de0f6d0.
 
 **Provenance:** user (2026-05-26), after observing the pattern across three experiments (C1, C3 falsified at fitness-ranking layer; C4 partial at hard-constraint layer). Asked to apply discipline to C6.

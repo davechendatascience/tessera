@@ -1,5 +1,7 @@
 # Research note: per-class loss families + multi-objective Pareto
 
+**Status update (2026-05-26 → `docs/planned/`):** Moved from `docs/research/`. Stage 6 multi-objective scoring not yet shipped; `ScoreVector` interface is fixed by §7. Stage 2 signatures (the prerequisite measurement layer) **SHIPPED** in `src/tessera/workbench/signatures/`; they serve both Stage 5 identification and Stage 6 scoring readings per §5 (bidirectional reading).
+
 **Status:** STAGE 2.5 design fix. Formalizes the per-model-class loss families and the resulting multi-objective Pareto structure that the workbench / library / identification pipeline needs.
 
 **Provenance:** user (2026-05-26): *"do we need different loss for different model class types? How would that affect our Pareto front?"* Surfaced while scoping Stage 2 signatures.

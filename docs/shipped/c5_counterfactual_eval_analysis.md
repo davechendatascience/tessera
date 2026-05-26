@@ -1,5 +1,7 @@
 # C5 theoretical pre-analysis: counterfactual evaluation harness
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. **VALIDATED-POSITIVE** via `src/tessera/experimental/counterfactual_eval.py` — first basket conjecture to pass empirically. Heat eq benchmark (`benchmarks/results/heat_equation_counterfactual_mvp_c5.md`) + Feynman cross-bench (`benchmarks/results/feynman_counterfactual_validation.md`) gave conditional verdict: helps when Class B natural-overfit is present; neutral otherwise. Mechanism is now load-bearing in the Stage 2.5 multi-objective Pareto design.
+
 **Status:** ? RESEARCH — theoretical analysis BEFORE implementation, per the methodological discipline established in commits ec98f12 / de0f6d0 / a6c6ced.
 
 **Provenance:** user (2026-05-26), continuing the basket discipline after C1/C3/C4/C6. C5 is the last open conjecture besides C2 (which is the most expensive at ~1-2 weeks).

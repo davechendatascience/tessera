@@ -1,5 +1,7 @@
 # C2 theoretical pre-analysis: distributional-output trees
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. **The analysis IS the deliverable.** Conclusion: C2 cannot be meaningfully tested without a heteroskedastic benchmark class (Ornstein-Uhlenbeck, GARCH, Hawkes); none of our current benchmarks have state-dependent noise. C2 implementation deferred until such a benchmark is added; the per-class loss framework (Stage 2.5) already documents NLL loss as the future home of distributional-output trees.
+
 **Status:** ? RESEARCH — pre-analysis only. **No empirical experiment to follow.** The analysis concludes that C2 cannot be meaningfully tested on tessera's current benchmark set; a new benchmark class would be required.
 
 **Provenance:** user (2026-05-26), completing the basket discipline. After cross-benchmark validation of C5 produced a conditional-helpfulness verdict (C5 helps when benchmark has natural-overfit failure modes; neutral otherwise), the C2 pre-analysis is needed to determine whether C2 is on similar footing.

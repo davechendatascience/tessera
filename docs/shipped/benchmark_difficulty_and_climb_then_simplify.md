@@ -1,5 +1,7 @@
 # Research note: benchmark difficulty and the climb-then-simplify path problem
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. The climb-then-simplify diagnosis informed the non-monotone parsimony schedule **SHIPPED** in `src/tessera/search/parsimony.py` and validated by the IK rerun (`benchmarks/results/ik_planar_3dof.md`). The benchmark-difficulty discussion remains useful framing but no separate implementation followed.
+
 **Status:** ? RESEARCH. Thinking-aloud document; not formalised. Captures two connected user observations from 2026-05-24:
 
 > *"We can actually construct a raw difficulty score for each of our benchmark. Rough guess is how many operations we need to get to it. And that's for within the vocabulary. What if there's approximations that are real good just like how eml trees can describe most operations. So we'll know beforehand that IK is difficult."*

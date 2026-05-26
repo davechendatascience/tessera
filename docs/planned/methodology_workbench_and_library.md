@@ -1,5 +1,7 @@
 # Research note: methodology workbench + canonical-system library
 
+**Status update (2026-05-26 → `docs/planned/`):** Moved from `docs/research/`. Stages 1 (workbench systems), 1.5 (ModelClass schema retrofit), and 2 (signatures Tier A+B) **SHIPPED** in `src/tessera/workbench/` + `src/tessera/workbench/signatures/`. Stages 3-9 (info-sufficiency calibration, library construction, identification pipeline, multi-objective scoring, partial-information curriculum, methodology paper, BTC-bridge application) remain pending. See CHANGELOG for per-stage detail.
+
 **Status:** STAGE 0 design fix. Architecture, canonical-system list, signature framework, and curriculum specified before implementation. This note is the design contract for all subsequent workbench / library / identification work.
 
 **See also:** [`model_class_taxonomy.md`](./model_class_taxonomy.md) (Stage 0.5) — extends this note with `ModelClass` as a first-class concept addressing the y vs y' vs y'' conflation. Refer to that note for the per-system `model_class` + `target_form()` schema enforced from Stage 1.5 onward.

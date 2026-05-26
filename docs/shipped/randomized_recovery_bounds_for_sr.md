@@ -1,5 +1,7 @@
 # Research note: randomized recovery bounds for symbolic regression
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. Heat-equation sample-complexity calibration **SHIPPED** at `benchmarks/results/heat_equation_sample_complexity.md`, executing §6 of this note (predicted sample requirements vs observed). The remaining literature-survey content remains useful reference; the experimental deliverable is complete.
+
 **Status:** ? RESEARCH. The bounds catalogued here exist in the literature; what's open is which of them transfer cleanly to tessera sub-problems and what their predictions would say about our empirical results.
 
 **Provenance:** user (2026-05-25), after watching a video on what's solvable and what isn't with operator learning: *"there seems to be a lot of theorem available already with functional querying bounds [...] modern applied maths."* The video framed a randomized algorithm constructing Green's functions for a PDE class up to a probability. The follow-up direction was: draft a research note cataloguing these theorems and identifying which tessera sub-problems they apply to.

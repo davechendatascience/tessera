@@ -1,5 +1,7 @@
 # Research note: Dancing Links (Knuth Algorithm X) as a side track
 
+**Status update (2026-05-26 → `docs/shipped/`):** Moved from `docs/research/`. Canonical Knuth Algorithm X (DLX) **SHIPPED** in `src/tessera/combinatorics/dancing_links.py` with full unit tests. The speculative SR-integration applications (exact-cover formulations of SR sub-problems) remain unimplemented but are not blocking; they could become research notes again if a concrete application emerges.
+
 **Status:** ▷ IN PROGRESS (canonical implementation only). The SR-integration applications below remain ? RESEARCH.
 
 **Provenance:** user (2026-05-24), after Phase 1 of §2.3 shipped: *"I propose also implementing the dancing links algorithm at the side. We'll have to track our implementation as the implementation complexity grows. Afterwards, you can continue on the phase 2 and 3."*
