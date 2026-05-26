@@ -6,6 +6,66 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (Pruned docs/research/ — moved 13 notes to planned/ or shipped/)
+
+User direction (2026-05-26): research/ had grown to 24 notes; some were
+design contracts for active work, others described conjectures that
+have been implemented and validated/falsified. Prune by moving each
+note to its appropriate state directory.
+
+MOVED TO docs/planned/ (3 notes — active design contracts, partial ship)
+
+  methodology_workbench_and_library.md (Stage 0 design contract;
+    Stages 1+2 shipped; Stages 3-9 still pending)
+  model_class_taxonomy.md (Stage 0.5 design contract;
+    Stage 1.5 retrofit shipped; informs ongoing Stage 5 identification)
+  per_class_loss_and_multi_objective.md (Stage 2.5 design contract;
+    Stage 6 multi-objective scoring not yet shipped)
+
+MOVED TO docs/shipped/ (10 notes — implementation delivered + tested)
+
+  c2_distributional_trees_analysis.md — pre-analysis only (no
+    implementation possible without heteroskedastic benchmark)
+  c3_mdl_analysis.md — FALSIFIED via experimental/mdl_scoring.py
+  c5_counterfactual_eval_analysis.md — VALIDATED via
+    experimental/counterfactual_eval.py + Feynman cross-bench
+  c6_residual_diagnostics_analysis.md — VALIDATED-AS-PREDICTED-NEG
+    via experimental/adaptive_search.py
+  analytical_delta_loss.md — sufficient_stats polish shipped in
+    src/tessera/search/sufficient_stats.py
+  benchmark_difficulty_and_climb_then_simplify.md — non-monotone
+    parsimony schedule + IK rerun shipped
+  benchmark_score_improvement.md — CAS simplify fallback shipped +
+    simplify_full default in GP scoring path
+  randomized_recovery_bounds_for_sr.md — heat eq sample-complexity
+    calibration benchmark shipped
+  sr_for_inverse_kinematics.md — IK benchmark + atan2/acos/asin
+    primitives shipped
+  dancing_links_for_sr.md — canonical DLX shipped in
+    src/tessera/combinatorics/dancing_links.py; SR-integration
+    speculation remains deferred but the core implementation is done
+
+STAYS in docs/research/ (11 notes — open exploration, no committed impl)
+
+  algorithmic_information_for_sr.md, fit_as_perfect_info_game.md,
+  gpu_and_cv_via_sr.md, hamiltonian_ising_for_sr.md,
+  high_dim_symbolic_regression.md, invariance_in_sr.md,
+  measure_theory_and_perfect_info.md, network_sr_and_budget_allocation.md,
+  search_as_energy_min.md, process_discovery_sr.md (C1-C6 parent anchor),
+  from_data_to_mechanism.md (synthesis anchor)
+
+RESULT
+
+  docs/research/ : 24 -> 11 notes (-54%)
+  docs/planned/  :  1 ->  4 notes (added 3 design contracts)
+  docs/shipped/  :  4 -> 14 notes (added 10 implemented conjectures)
+
+The individual moved files retain their original "**Status:**"
+headers; their new directory location is the primary signal of
+their state. If subsequent passes want to update each file's
+header to reflect its shipped/planned status, that's polish-pass
+work; the move itself is the load-bearing change.
+
 ### Added (Stage 2b — 8 within-class signature extractors + full-signature dispatcher)
 
 User direction (2026-05-26): complete Stage 2 by adding the 8 within-class
