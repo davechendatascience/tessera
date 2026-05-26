@@ -6,6 +6,91 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Stage 2.5 — per-class loss families + multi-objective scoring design contract)
+
+User direction (2026-05-26): "do we need different loss for different
+model class types? How would that affect our Pareto front?" Surfaced
+while scoping Stage 2 signatures.
+
+NEW docs/research/per_class_loss_and_multi_objective.md (~190 lines)
+
+THE THESIS
+
+Different model classes require structurally different losses. The
+one-step finite-difference MSE (current GP default for ODE/PDE) is
+*not the same loss* as trajectory rollout MSE — they measure
+different things and yield different fits. The temporal-differencing
+Class A tautology (heat-equation example: M2D[1·(0,0) + -1·(1,0)](U)
+= -dt_U) wins on one-step MSE and is uninvertible for rollout. We
+have been measuring the wrong thing for PDE discovery.
+
+LOSS FAMILIES PER MODEL CLASS
+
+  ALGEBRAIC   — MSE on (y, y_hat); + smoothness penalty (Pareto axis)
+  ODE/PDE     — one-step MSE on (dt, f_hat) + rollout MSE
+                + conservation violation + invariance violation
+                + smoothness penalty + (PDE only) BC respect
+
+Multi-objective Pareto: per model class, 3-4 axes (cx, fit-loss,
+rollout-loss, structural-penalties...). Class B natural-overfit
+candidates that tie on (cx, one-step MSE) get dominated on at least
+one structural axis and fall off the multi-D Pareto automatically.
+
+THE BIDIRECTIONAL READING OF SIGNATURES
+
+A single signature serves two purposes:
+  - IDENTIFY (Stage 5): signature measures unknown trajectory; matched
+    against library anchors → identification confidence
+  - SCORE (Stage 6): signature deviation between declared-system
+    expectation and candidate-fit measurement → Pareto penalty
+
+Same machinery, two readings. This tightens Stage 2 -> Stage 6
+coupling: building Stage 2 well delivers two-thirds of Stage 6 for
+free.
+
+STAGE 5 PIPELINE UPDATE
+
+  Step 1: classify model class (Tier A signatures)
+  Step 2: SELECT LOSS FAMILY per model class       (NEW)
+  Step 3: extract within-class signatures (Tier B)
+  Step 4: match against library anchors
+  Step 5: class-aware SR with class-appropriate loss
+  Step 6: multi-objective Pareto across ScoreVector axes
+  Step 7: if multiple classes plausible, report cross-class Pareto
+
+STAGE 6 INTERFACE FIXED
+
+  @dataclass(frozen=True)
+  class ScoreVector:
+      cx: int
+      one_step_mse: float
+      rollout_mse: Optional[float]
+      conservation_violation: Optional[float]
+      invariance_violation: Optional[float]
+      smoothness_penalty: Optional[float]
+      bc_violation: Optional[float]
+
+The GP loss_fn interface will extend to return ScoreVector instead
+of float when Stage 6 ships. Tournament + selection use dominance.
+
+EXPLICITLY DEFERRED
+
+  Bayesian / NLL losses for noisy data        -> Stage 9 (SDE)
+  Adaptive loss weighting / Pareto scalarization -> Stage 6 ablation
+  Implicit-equation loss |F(y, y', ...)|       -> with IMPLICIT class
+  Stochastic-rollout loss                      -> Stage 9 (SDE)
+
+NO STAGE 2 DESIGN CHANGE
+
+The 11 signatures (8 within-class + 3 model-class) from Stage 0 §6
+and Stage 0.5 stay as-is. Stage 2 proceeds as planned. The note
+clarifies that signatures must run on any Trajectory (observed or
+candidate-generated) so Stage 6 can call them on simulated candidate
+trajectories — already compatible with the planned design.
+
+Task #112 closed. Stage 2 (#108) and Stage 3 (#109) remain pending;
+Stage 6 multi-objective is now scoped concretely for future ship.
+
 ### Added (Stage 1.5 — ModelClass schema retrofit; algebraic system; PDE grid metadata)
 
 User direction (2026-05-26): apply the 8 deliverables from Section 8
