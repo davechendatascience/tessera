@@ -6,6 +6,78 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Stage 1.5 — ModelClass schema retrofit; algebraic system; PDE grid metadata)
+
+User direction (2026-05-26): apply the 8 deliverables from Section 8
+of `docs/research/model_class_taxonomy.md` (Stage 0.5 design contract).
+
+SCHEMA CHANGES — workbench/types.py
+
+  - NEW `ModelClass` enum: ALGEBRAIC / DISCRETE_MAP / ODE / PDE.
+  - `CanonicalSystem` gains `model_class: ModelClass` class attr
+    replacing `domain: Literal[...]` (kept as `@property` backward-compat
+    alias for one transition window).
+  - `CanonicalSystem` gains `canonical_target_form: str` — one-line
+    description of the canonical SR target form per system.
+  - `CanonicalSystem` gains abstract `target_form(traj) -> (features, target)`
+    method. Model-class-specific transformation; downstream SR is then
+    class-agnostic.
+  - `InformationRequirements` gains `min_dt`, `min_dx`, `grid_floor`
+    fields recording the discrete-vs-continuum gap for ODE/PDE
+    identification (cf. Stage 0.5 §5.4).
+
+NEW SYSTEM — algebraic_feynman_gaussian (Feynman I.6.20a)
+
+  Pure function y = exp(-theta^2/2) with iid theta ~ Uniform.
+  First ALGEBRAIC entry in the workbench. Spans the model-class
+  discrimination so Stage 5 identification has algebraic-vs-ODE-vs-PDE
+  as a real distinction.
+
+  Total canonical systems: 10 → 11.
+
+target_form IMPLEMENTATIONS
+
+  ODE       — (state[:-1], (state[1:] - state[:-1]) / dt)
+  PDE       — (u[:-1], u[1:] - u[:-1])
+  ALGEBRAIC — (traj.meta['inputs'], traj.state)
+
+Stage 4 library construction (forthcoming) will use these directly
+instead of hand-coded data prep per system.
+
+PDE GRID METADATA POPULATED
+
+  heat_1d:    min_dt=0.5, min_dx=1.0, grid_floor={cfl_max: 0.5, ...}
+  burgers_1d: min_dt=0.01, min_dx=0.05, grid_floor={cfl_max: 0.5, ...}
+
+All ODEs: min_dt populated (0.01-0.1 depending on system stiffness).
+Algebraic: min_dt/min_dx/grid_floor are None (no time-stepping).
+
+TEST EXPANSION — tests/workbench/test_systems.py
+
+  44 -> 94 tests, all pass. New coverage:
+    - TestTargetForm: shape contract for each model class + algebraic
+      gets exact y = exp(-theta^2/2) round-trip
+    - TestAlgebraicSystem: model_class is ALGEBRAIC; inputs in meta;
+      function value correct to atol=1e-12
+    - TestPDEGridMetadata: PDEs declare min_dx + grid_floor; ODEs
+      declare min_dt only; algebraic declares neither
+    - test_model_class_is_enum, test_domain_backcompat_alias
+
+DESIGN NOTE UPDATES
+
+  - docs/research/methodology_workbench_and_library.md: forward-
+    reference to the Stage 0.5 note in header; algebraic_feynman_gaussian
+    row added to Section 4 (canonical systems list).
+
+REGRESSION CHECK
+
+  808 tests pass across the full tessera test suite (3 pre-existing skips).
+  136 prior tests unaffected; 50 prior workbench tests still pass; 44
+  new workbench tests pass.
+
+Task #111 closed. Stage 2 (signatures) #108 and Stage 3 (info-suff
+calibration) #109 remain pending.
+
 ### Added (Stage 0.5 — model class as a first-class concept in SR)
 
 User direction (2026-05-26): while reviewing Stage 1 tests, surfaced

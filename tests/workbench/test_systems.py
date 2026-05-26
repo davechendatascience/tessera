@@ -23,15 +23,22 @@ import numpy as np
 import pytest
 
 from tessera.workbench import (
-    REGISTRY, get_system, list_systems,
+    REGISTRY, get_system, list_systems, ModelClass,
     SYMMETRY_VOCABULARY, CONSERVATION_VOCABULARY, SMOOTHNESS_CLASSES,
 )
 from tessera.workbench.types import CanonicalSystem
 
 
+ALL_SYSTEMS = [
+    "harmonic_1d", "damped_harmonic_1d", "vdp", "lorenz63", "fhn",
+    "heat_1d", "burgers_1d", "linear_pendulum", "nonlinear_pendulum",
+    "kepler", "algebraic_feynman_gaussian",
+]
+
+
 class TestRegistry:
-    def test_all_ten_registered(self):
-        assert len(list_systems()) == 10
+    def test_all_eleven_registered(self):
+        assert len(list_systems()) == 11
 
     def test_ids_unique(self):
         ids = list_systems()
@@ -46,32 +53,37 @@ class TestRegistry:
         with pytest.raises(KeyError):
             get_system("does_not_exist")
 
-    @pytest.mark.parametrize("sid", [
-        "harmonic_1d", "damped_harmonic_1d", "vdp", "lorenz63", "fhn",
-        "heat_1d", "burgers_1d", "linear_pendulum", "nonlinear_pendulum",
-        "kepler",
-    ])
+    @pytest.mark.parametrize("sid", ALL_SYSTEMS)
     def test_metadata_complete(self, sid):
         s = get_system(sid)
         meta = s.metadata()
         assert meta["id"] == sid
-        assert meta["domain"] in ("ode", "pde", "sde", "algebraic")
+        assert meta["model_class"] in ("algebraic", "discrete_map", "ode", "pde")
         assert meta["state_dim"] > 0
+        assert isinstance(meta["canonical_target_form"], str)
+        assert len(meta["canonical_target_form"]) > 0
         assert meta["smoothness_class"] in SMOOTHNESS_CLASSES
         for sym in meta["symmetries"]:
             assert sym in SYMMETRY_VOCABULARY
         for c in meta["conservation_laws"]:
             assert c in CONSERVATION_VOCABULARY
 
+    @pytest.mark.parametrize("sid", ALL_SYSTEMS)
+    def test_model_class_is_enum(self, sid):
+        s = get_system(sid)
+        assert isinstance(s.model_class, ModelClass)
+
+    def test_domain_backcompat_alias(self):
+        # domain is a backwards-compat alias for model_class.value
+        for sid in list_systems():
+            s = get_system(sid)
+            assert s.domain == s.model_class.value
+
 
 class TestGenerationContract:
     """Every system must satisfy basic generation contract."""
 
-    @pytest.mark.parametrize("sid", [
-        "harmonic_1d", "damped_harmonic_1d", "vdp", "lorenz63", "fhn",
-        "heat_1d", "burgers_1d", "linear_pendulum", "nonlinear_pendulum",
-        "kepler",
-    ])
+    @pytest.mark.parametrize("sid", ALL_SYSTEMS)
     def test_generate_returns_trajectory(self, sid):
         s = get_system(sid)
         traj = s.generate(t_max=2.0, dt=0.01, noise_std=0.0, seed=0)
@@ -253,6 +265,117 @@ class TestBurgers:
         # under periodic BC + symmetric IC. Tolerance accommodates upwind
         # scheme's slight numerical drift.
         assert np.all(np.abs(means) < 0.05)
+
+
+class TestTargetForm:
+    """Stage 0.5: target_form transforms trajectories into SR-ready
+    (features, target) tuples, per model class.
+
+    ALGEBRAIC    -- features = inputs (from meta), target = y
+    ODE          -- features = state[:-1], target = finite-diff of state
+    PDE          -- features = u[:-1], target = u[1:] - u[:-1]
+    DISCRETE_MAP -- features = state[:-1], target = state[1:]
+    """
+
+    @pytest.mark.parametrize("sid", ALL_SYSTEMS)
+    def test_target_form_returns_arrays(self, sid):
+        s = get_system(sid)
+        traj = s.generate(t_max=2.0, dt=0.01, noise_std=0.0, seed=0)
+        features, target = s.target_form(traj)
+        assert isinstance(features, np.ndarray)
+        assert isinstance(target, np.ndarray)
+        assert features.shape[0] == target.shape[0]
+        assert np.all(np.isfinite(features))
+        assert np.all(np.isfinite(target))
+
+    @pytest.mark.parametrize("sid", [
+        "harmonic_1d", "damped_harmonic_1d", "vdp", "lorenz63", "fhn",
+        "linear_pendulum", "nonlinear_pendulum", "kepler",
+    ])
+    def test_ode_target_form_finite_difference(self, sid):
+        """For ODE systems, target_form's target should match finite-
+        difference of state per the canonical form 'd[state]/dt = f(state)'."""
+        s = get_system(sid)
+        traj = s.generate(t_max=2.0, dt=0.01, noise_std=0.0, seed=0)
+        features, target = s.target_form(traj)
+        assert features.shape == traj.state[:-1].shape
+        assert target.shape == traj.state[:-1].shape
+        # target should be (state[1:] - state[:-1]) / dt
+        dt = float(traj.t[1] - traj.t[0])
+        expected = (traj.state[1:] - traj.state[:-1]) / dt
+        np.testing.assert_allclose(target, expected)
+
+    @pytest.mark.parametrize("sid", ["heat_1d", "burgers_1d"])
+    def test_pde_target_form_shape(self, sid):
+        s = get_system(sid)
+        traj = s.generate(t_max=2.0, dt=0.01, noise_std=0.0, seed=0)
+        features, target = s.target_form(traj)
+        # PDE: features = u[:-1], target = u[1:] - u[:-1]
+        assert features.shape == traj.state[:-1].shape
+        assert target.shape == traj.state[:-1].shape
+        np.testing.assert_allclose(target, traj.state[1:] - traj.state[:-1])
+
+    def test_algebraic_target_form(self):
+        s = get_system("algebraic_feynman_gaussian")
+        traj = s.generate(n_samples=200, seed=0)
+        features, target = s.target_form(traj)
+        # features = inputs (theta); target = y = exp(-theta^2/2)
+        assert features.shape[0] == 200
+        assert target.shape[0] == 200
+        theta = features[:, 0]
+        expected_y = np.exp(-(theta ** 2) / 2.0).reshape(-1, 1)
+        np.testing.assert_allclose(target, expected_y, atol=1e-12)
+
+
+class TestAlgebraicSystem:
+    """Sanity tests for the new algebraic_feynman_gaussian entry."""
+
+    def test_model_class_is_algebraic(self):
+        s = get_system("algebraic_feynman_gaussian")
+        assert s.model_class == ModelClass.ALGEBRAIC
+
+    def test_inputs_in_meta(self):
+        s = get_system("algebraic_feynman_gaussian")
+        traj = s.generate(n_samples=100, seed=0)
+        assert "inputs" in traj.meta
+        assert traj.meta["inputs"].shape == (100, 1)
+        assert traj.meta["input_names"] == ["theta"]
+
+    def test_function_value_correct(self):
+        s = get_system("algebraic_feynman_gaussian")
+        traj = s.generate(n_samples=500, noise_std=0.0, seed=42)
+        theta = traj.meta["inputs"][:, 0]
+        y_expected = np.exp(-(theta ** 2) / 2.0)
+        np.testing.assert_allclose(traj.state[:, 0], y_expected, atol=1e-12)
+
+
+class TestPDEGridMetadata:
+    """Stage 0.5 §5.4: PDE systems declare min_dt, min_dx, grid_floor."""
+
+    @pytest.mark.parametrize("sid", ["heat_1d", "burgers_1d"])
+    def test_pde_has_grid_metadata(self, sid):
+        s = get_system(sid)
+        assert s.info_min.min_dt is not None
+        assert s.info_min.min_dx is not None
+        assert s.info_min.grid_floor is not None
+        assert "cfl_max" in s.info_min.grid_floor
+
+    @pytest.mark.parametrize("sid", [
+        "harmonic_1d", "damped_harmonic_1d", "vdp", "lorenz63", "fhn",
+        "linear_pendulum", "nonlinear_pendulum", "kepler",
+    ])
+    def test_ode_has_dt_no_dx(self, sid):
+        s = get_system(sid)
+        assert s.info_min.min_dt is not None
+        assert s.info_min.min_dx is None      # ODEs don't have spatial grid
+        assert s.info_min.grid_floor is None
+
+    def test_algebraic_has_no_grid_metadata(self):
+        s = get_system("algebraic_feynman_gaussian")
+        # Algebraic has no time/space; min_dt and min_dx should be None
+        assert s.info_min.min_dt is None
+        assert s.info_min.min_dx is None
+        assert s.info_min.grid_floor is None
 
 
 class TestLinearVsNonlinearPendulumDistinguishable:

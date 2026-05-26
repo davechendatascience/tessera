@@ -19,9 +19,56 @@ from .integrators import (
     rk4_integrate, forward_euler_pde_1d, apply_observation_noise,
 )
 from .types import (
-    CanonicalSystem, InformationRequirements, Trajectory,
+    CanonicalSystem, InformationRequirements, ModelClass, Trajectory,
     validate_symmetries, validate_conservation, validate_smoothness,
 )
+
+
+# ----------------------------------------------------------------------
+# target_form helpers (Stage 0.5 — model class transformation)
+# ----------------------------------------------------------------------
+
+def _ode_target_form(traj: Trajectory) -> tuple[np.ndarray, np.ndarray]:
+    """ODE target_form: features = state[:-1]; target = finite-difference."""
+    state = traj.state
+    t = traj.t
+    dt = float(t[1] - t[0])
+    features = state[:-1]
+    target = (state[1:] - state[:-1]) / dt
+    return features, target
+
+
+def _pde_target_form(traj: Trajectory) -> tuple[np.ndarray, np.ndarray]:
+    """PDE target_form: features = u[:-1]; target = dt-field = u[1:] - u[:-1].
+
+    The discrete update IS the data-generating process for any finite
+    simulation. Per Stage 0.5 §2 — we identify the discrete update,
+    not the continuum PDE. Spatial-neighbor access is the SR engine's
+    responsibility via Measure2D operators.
+    """
+    u = traj.state
+    features = u[:-1]
+    target = u[1:] - u[:-1]
+    return features, target
+
+
+def _discrete_map_target_form(traj: Trajectory) -> tuple[np.ndarray, np.ndarray]:
+    """Discrete-map target_form: features = state[:-1]; target = state[1:]."""
+    return traj.state[:-1], traj.state[1:]
+
+
+def _algebraic_target_form(traj: Trajectory) -> tuple[np.ndarray, np.ndarray]:
+    """Algebraic target_form: features = traj.meta['inputs']; target = state.
+
+    Algebraic systems store inputs in `meta` since there is no
+    time/state structure. `state` holds the output y values.
+    """
+    if "inputs" not in traj.meta:
+        raise ValueError(
+            f"Algebraic system {traj.system_id!r} did not store 'inputs' in "
+            f"trajectory meta; cannot derive target_form features."
+        )
+    return traj.meta["inputs"], traj.state
 
 
 # ----------------------------------------------------------------------
@@ -49,8 +96,9 @@ def _resolve_ic(self, ic):
 
 class HarmonicOscillator1D(CanonicalSystem):
     id = "harmonic_1d"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = "ddot{x} = -omega^2 * x  (state: [x, dx/dt])"
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 2
     observable_dim = 2
     parameters = {"omega": (0.5, 5.0)}
@@ -60,8 +108,11 @@ class HarmonicOscillator1D(CanonicalSystem):
     mode_count = 1
     info_min = InformationRequirements(
         min_samples=50, min_trajectories=1, noise_max=0.1,
+        min_dt=0.05,
         identifiability_proof=None,
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"omega": 1.0}
@@ -92,8 +143,9 @@ class HarmonicOscillator1D(CanonicalSystem):
 
 class DampedHarmonicOscillator1D(CanonicalSystem):
     id = "damped_harmonic_1d"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = "ddot{x} = -omega^2 * x - gamma * dx/dt  (state: [x, dx/dt])"
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 2
     observable_dim = 2
     parameters = {"omega": (0.5, 5.0), "gamma": (0.0, 1.0)}
@@ -103,7 +155,10 @@ class DampedHarmonicOscillator1D(CanonicalSystem):
     mode_count = 1
     info_min = InformationRequirements(
         min_samples=100, min_trajectories=1, noise_max=0.05,
+        min_dt=0.05,
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"omega": 1.0, "gamma": 0.2}
@@ -135,8 +190,9 @@ class DampedHarmonicOscillator1D(CanonicalSystem):
 
 class VanDerPol(CanonicalSystem):
     id = "vdp"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = "ddot{x} = mu * (1 - x^2) * dx/dt - x  (state: [x, dx/dt])"
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 2
     observable_dim = 2
     parameters = {"mu": (0.1, 5.0)}
@@ -146,8 +202,11 @@ class VanDerPol(CanonicalSystem):
     mode_count = 1  # single stable limit cycle (post-transient)
     info_min = InformationRequirements(
         min_samples=200, min_trajectories=1, noise_max=0.05,
+        min_dt=0.05,
         excitation_requirements=["non-equilibrium IC required (origin is unstable)"],
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"mu": 1.0}
@@ -179,11 +238,12 @@ class VanDerPol(CanonicalSystem):
 
 class Lorenz63(CanonicalSystem):
     id = "lorenz63"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = (
         "dx/dt = sigma * (y - x); dy/dt = x * (rho - z) - y; "
         "dz/dt = x * y - beta * z  (state: [x, y, z])"
     )
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 3
     observable_dim = 3
     parameters = {"sigma": (5.0, 15.0), "rho": (20.0, 40.0), "beta": (1.0, 4.0)}
@@ -193,8 +253,11 @@ class Lorenz63(CanonicalSystem):
     mode_count = 1  # single chaotic attractor (lobes are not separate modes)
     info_min = InformationRequirements(
         min_samples=2000, min_trajectories=1, noise_max=0.02,
+        min_dt=0.02,
         excitation_requirements=["transient skip needed to reach attractor"],
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"sigma": 10.0, "rho": 28.0, "beta": 8.0 / 3.0}
@@ -231,11 +294,12 @@ class Lorenz63(CanonicalSystem):
 
 class FitzHughNagumo(CanonicalSystem):
     id = "fhn"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = (
         "dv/dt = v - v^3/3 - w + I; "
         "dw/dt = epsilon * (v + a - b * w)  (state: [v, w])"
     )
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 2
     observable_dim = 2
     parameters = {
@@ -248,10 +312,13 @@ class FitzHughNagumo(CanonicalSystem):
     mode_count = 1  # excitable or oscillatory depending on parameters
     info_min = InformationRequirements(
         min_samples=300, min_trajectories=2, noise_max=0.03,
+        min_dt=0.1,
         excitation_requirements=[
             "multiple IC needed to distinguish excitable vs oscillatory regimes",
         ],
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         # I=0.5 puts us in oscillatory regime (limit cycle)
@@ -284,8 +351,9 @@ class FitzHughNagumo(CanonicalSystem):
 
 class Heat1D(CanonicalSystem):
     id = "heat_1d"
-    domain = "pde"
+    model_class = ModelClass.PDE
     dynamics_doc = "du/dt = alpha * d^2u/dx^2 with Dirichlet BC u(boundary) = 0"
+    canonical_target_form = "dt(u) = f(u, dx(u), dx^2(u))"
     state_dim = 64       # default grid size; configurable via generate(n_x=...)
     observable_dim = 64
     parameters = {"alpha": (0.01, 0.2)}
@@ -295,10 +363,14 @@ class Heat1D(CanonicalSystem):
     mode_count = 1
     info_min = InformationRequirements(
         min_samples=100, min_trajectories=3, noise_max=0.02,
+        min_dt=0.5, min_dx=1.0,
+        grid_floor={"cfl_max": 0.5, "stencil_width": 3},
         excitation_requirements=[
             "multi-trajectory (varying IC) required for mechanism vs aggregate disambiguation",
         ],
     )
+
+    def target_form(self, traj): return _pde_target_form(traj)
 
     def default_params(self):
         return {"alpha": 0.05}
@@ -338,11 +410,12 @@ class Heat1D(CanonicalSystem):
 
 class Burgers1D(CanonicalSystem):
     id = "burgers_1d"
-    domain = "pde"
+    model_class = ModelClass.PDE
     dynamics_doc = (
         "du/dt = -u * du/dx + nu * d^2u/dx^2 (viscous Burgers; "
         "upwind for advection, centered for diffusion, periodic BC)"
     )
+    canonical_target_form = "dt(u) = f(u, dx(u), dx^2(u))"
     state_dim = 128
     observable_dim = 128
     parameters = {"nu": (0.005, 0.1)}
@@ -352,8 +425,12 @@ class Burgers1D(CanonicalSystem):
     mode_count = 1
     info_min = InformationRequirements(
         min_samples=200, min_trajectories=3, noise_max=0.01,
+        min_dt=0.01, min_dx=0.05,
+        grid_floor={"cfl_max": 0.5, "stencil_width": 3},
         excitation_requirements=["shock-forming IC (e.g., sinusoidal initial profile)"],
     )
+
+    def target_form(self, traj): return _pde_target_form(traj)
 
     def default_params(self):
         return {"nu": 0.02}
@@ -394,8 +471,9 @@ class Burgers1D(CanonicalSystem):
 
 class LinearPendulum(CanonicalSystem):
     id = "linear_pendulum"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = "ddot{theta} = -(g/L) * theta  (small-angle approx; state: [theta, dtheta/dt])"
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 2
     observable_dim = 2
     parameters = {"g_over_L": (1.0, 10.0)}
@@ -405,8 +483,11 @@ class LinearPendulum(CanonicalSystem):
     mode_count = 1
     info_min = InformationRequirements(
         min_samples=50, min_trajectories=1, noise_max=0.1,
+        min_dt=0.05,
         identifiability_proof="trivially identifiable; period gives g/L exactly",
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"g_over_L": 9.81}
@@ -437,8 +518,9 @@ class LinearPendulum(CanonicalSystem):
 
 class NonlinearPendulum(CanonicalSystem):
     id = "nonlinear_pendulum"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = "ddot{theta} = -(g/L) * sin(theta)  (full pendulum; state: [theta, dtheta/dt])"
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 2
     observable_dim = 2
     parameters = {"g_over_L": (1.0, 10.0)}
@@ -448,11 +530,14 @@ class NonlinearPendulum(CanonicalSystem):
     mode_count = 2  # libration (bound) vs rotation (unbound) — separated by separatrix
     info_min = InformationRequirements(
         min_samples=200, min_trajectories=3, noise_max=0.05,
+        min_dt=0.05,
         excitation_requirements=[
             "multiple amplitudes required to distinguish from linear pendulum",
             "large-amplitude IC needed to see trig nonlinearity",
         ],
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"g_over_L": 9.81}
@@ -483,11 +568,12 @@ class NonlinearPendulum(CanonicalSystem):
 
 class Kepler2D(CanonicalSystem):
     id = "kepler"
-    domain = "ode"
+    model_class = ModelClass.ODE
     dynamics_doc = (
         "2D Kepler problem: r''(t) = -GM * r / |r|^3  "
         "(state: [x, y, dx/dt, dy/dt])"
     )
+    canonical_target_form = "d[state]/dt = f(state)"
     state_dim = 4
     observable_dim = 4
     parameters = {"GM": (0.5, 2.0)}
@@ -499,9 +585,12 @@ class Kepler2D(CanonicalSystem):
     mode_count = 1  # bound elliptic orbit when E < 0 (single closed orbit)
     info_min = InformationRequirements(
         min_samples=500, min_trajectories=1, noise_max=0.01,
+        min_dt=0.01,
         excitation_requirements=["bound IC (E < 0) for closed orbit"],
         identifiability_proof="orbital elements + Kepler's third law",
     )
+
+    def target_form(self, traj): return _ode_target_form(traj)
 
     def default_params(self):
         return {"GM": 1.0}
@@ -529,6 +618,66 @@ class Kepler2D(CanonicalSystem):
             t=t, state=states, observable=obs, system_id=self.id,
             params=p, ic=y0, noise_std=noise_std, seed=seed,
         )
+
+
+# ----------------------------------------------------------------------
+# 11. Algebraic — Feynman I.6.20a Gaussian (pure function, no time)
+# ----------------------------------------------------------------------
+
+class AlgebraicFeynmanGaussian(CanonicalSystem):
+    """Pure function y = exp(-theta^2 / 2). Feynman I.6.20a.
+
+    Algebraic canonical system: no time, no state dynamics. Inputs are
+    iid uniform samples; output is the deterministic function value.
+    Trajectory.state holds y; Trajectory.meta['inputs'] holds the
+    sampled theta values. There is no t/dt — `t` is a sample index.
+
+    Per Stage 0.5 design contract — this is the first ALGEBRAIC entry
+    in the workbench, spanning the model-class discrimination so the
+    Stage 5 identification pipeline has algebraic-vs-ODE-vs-PDE as a
+    real distinction to learn.
+    """
+    id = "algebraic_feynman_gaussian"
+    model_class = ModelClass.ALGEBRAIC
+    dynamics_doc = "y = exp(-theta^2 / 2); iid theta ~ Uniform(theta_min, theta_max)"
+    canonical_target_form = "y = f(inputs)"
+    state_dim = 1
+    observable_dim = 1
+    parameters = {"theta_min": (0.0, 1.0), "theta_max": (2.0, 5.0)}
+    symmetries = validate_symmetries([])  # no time/space; symmetries are over input distribution
+    conservation_laws = validate_conservation([])
+    smoothness_class = validate_smoothness("analytic")
+    mode_count = 1
+    info_min = InformationRequirements(
+        min_samples=200, min_trajectories=1, noise_max=0.05,
+        identifiability_proof="dense iid sampling of theta over support",
+    )
+
+    def default_params(self):
+        return {"theta_min": 0.5, "theta_max": 5.0}
+
+    def default_ic(self):
+        # Algebraic has no IC; return empty for contract.
+        return np.array([], dtype=np.float64)
+
+    def generate(self, *, params=None, ic=None, t_max=None, dt=None,
+                 noise_std=0.0, seed=None, n_samples: int = 2000,
+                 **kwargs) -> Trajectory:
+        p = _resolve_params(self, params)
+        rng = _rng(seed)
+        theta = rng.uniform(p["theta_min"], p["theta_max"], n_samples)
+        y = np.exp(-(theta ** 2) / 2.0).reshape(-1, 1)
+        # For consistency with other systems: `t` is sample index;
+        # `state` holds y; `meta['inputs']` holds theta.
+        t = np.arange(n_samples, dtype=np.float64)
+        obs = apply_observation_noise(y, noise_std, rng)
+        return Trajectory(
+            t=t, state=y, observable=obs, system_id=self.id,
+            params=p, ic=self.default_ic(), noise_std=noise_std, seed=seed,
+            meta={"inputs": theta.reshape(-1, 1), "input_names": ["theta"]},
+        )
+
+    def target_form(self, traj): return _algebraic_target_form(traj)
 
 
 # ----------------------------------------------------------------------
@@ -563,7 +712,7 @@ def list_systems() -> list[str]:
     return list(REGISTRY.keys())
 
 
-# Register all 10 canonical systems.
+# Register all 11 canonical systems.
 for _cls in [
     HarmonicOscillator1D,
     DampedHarmonicOscillator1D,
@@ -575,5 +724,6 @@ for _cls in [
     LinearPendulum,
     NonlinearPendulum,
     Kepler2D,
+    AlgebraicFeynmanGaussian,
 ]:
     register(_cls())

@@ -10,9 +10,34 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Literal, Optional
 
 import numpy as np
+
+
+class ModelClass(str, Enum):
+    """What kind of mathematical object generated the data.
+
+    See `docs/research/model_class_taxonomy.md` for the full taxonomy
+    + the y vs y' vs y'' conflation it addresses.
+
+    ALGEBRAIC    — pure function y = f(x); inputs are iid in no
+                   particular order; no time/state structure.
+    DISCRETE_MAP — y_{n+1} = f(y_n); iterated map.
+    ODE          — dx/dt = f(x, t) on state x (higher-order ODEs
+                   reduce to first-order on extended state).
+    PDE          — dt(u) = f(u, dx(u), dx^2(u), ...); local update
+                   rule on a spatial grid.
+
+    Each model class implies a different `target_form(trajectory)`
+    transformation. Stage 5 identification first classifies the model
+    class via signature tests before within-class SR.
+    """
+    ALGEBRAIC = "algebraic"
+    DISCRETE_MAP = "discrete_map"
+    ODE = "ode"
+    PDE = "pde"
 
 
 # Standardized vocabulary for cross-system signature comparisons.
@@ -39,8 +64,6 @@ CONSERVATION_VOCABULARY = frozenset({
 
 SMOOTHNESS_CLASSES = ("analytic", "c_infty", "c_2", "lipschitz", "general")
 
-DomainType = Literal["ode", "pde", "sde", "algebraic"]
-
 
 @dataclass
 class InformationRequirements:
@@ -65,6 +88,18 @@ class InformationRequirements:
     identifiability_proof: Optional[str] = None
     """Citation if a formal identifiability result exists. None means
     requirements are empirically calibrated only."""
+
+    # Per Stage 0.5 note (model_class_taxonomy.md §5.4): record the
+    # discrete-vs-continuum gap explicitly for ODE/PDE systems.
+    min_dt: Optional[float] = None
+    """Maximum time step (None for algebraic — no time-stepping).
+    For ODE/PDE, identification is impossible if simulator dt > min_dt
+    because truncation error dominates noise."""
+    min_dx: Optional[float] = None
+    """Maximum spatial step (PDE only; None otherwise)."""
+    grid_floor: Optional[dict] = None
+    """PDE-specific resolution constraints beyond (min_dt, min_dx).
+    Example: {'cfl_max': 0.5, 'stencil_width': 3}. None for non-PDE."""
 
 
 @dataclass
@@ -93,12 +128,19 @@ class CanonicalSystem(ABC):
     """Abstract base for a canonical dynamical system in the workbench.
 
     Concrete subclasses must:
-      - Set class attributes: id, domain, dynamics_doc, state_dim,
-        observable_dim, parameters, symmetries, conservation_laws,
-        smoothness_class, mode_count, info_min
+      - Set class attributes: id, model_class, dynamics_doc,
+        canonical_target_form, state_dim, observable_dim, parameters,
+        symmetries, conservation_laws, smoothness_class, mode_count,
+        info_min
       - Implement default_params() -> dict[str, float]
       - Implement default_ic() -> np.ndarray
       - Implement generate(...) -> Trajectory
+      - Implement target_form(traj) -> (features, target)
+
+    Per Stage 0.5 design contract (`docs/research/model_class_taxonomy.md`),
+    `model_class` is the first-class concept declaring what mathematical
+    object generated the data; `target_form()` is the model-class-specific
+    transformation producing SR-ready (features, target) arrays.
 
     Implementations should keep generators deterministic given (params, ic,
     seed). The noise_std argument controls observation noise applied to
@@ -107,8 +149,11 @@ class CanonicalSystem(ABC):
 
     # Class attributes (each subclass sets these)
     id: str
-    domain: DomainType
+    model_class: ModelClass        # NEW (Stage 0.5) — first-class
     dynamics_doc: str
+    canonical_target_form: str     # NEW — one-line description of the
+    """Short human-readable description of the canonical target form
+    (e.g., 'dt(u) = f(u, dx(u), dx^2(u))' for heat equation)."""
     state_dim: int
     observable_dim: int
     parameters: dict[str, tuple[float, float]]
@@ -118,6 +163,13 @@ class CanonicalSystem(ABC):
     smoothness_class: str
     mode_count: int
     info_min: InformationRequirements
+
+    # Backward-compat alias for one transition window. New code should
+    # use model_class; this exposes the same information in the older
+    # vocabulary (DEPRECATED — will be removed in a later cleanup).
+    @property
+    def domain(self) -> str:
+        return self.model_class.value
 
     @abstractmethod
     def default_params(self) -> dict[str, float]:
@@ -154,12 +206,32 @@ class CanonicalSystem(ABC):
         Trajectory dataclass with state, observable, and provenance.
         """
 
+    @abstractmethod
+    def target_form(self, traj: Trajectory) -> tuple[np.ndarray, np.ndarray]:
+        """Transform a trajectory into (features, target) for SR.
+
+        Model-class-specific:
+          ALGEBRAIC    — (inputs, y) where inputs are in traj.meta['inputs']
+          DISCRETE_MAP — (state[:-1], state[1:])
+          ODE          — (state[:-1], finite-difference of state)
+          PDE          — (u[:-1], u[1:] - u[:-1])  where u is the field
+
+        Returns
+        -------
+        features : np.ndarray
+            What the SR target is a function of. Shape depends on model class.
+        target : np.ndarray
+            What SR is trying to predict. Shape matches features along
+            the sample axis.
+        """
+
     # Convenience: declared metadata as a dict (useful for logging,
     # signature comparison, library construction).
     def metadata(self) -> dict:
         return {
             "id": self.id,
-            "domain": self.domain,
+            "model_class": self.model_class.value,
+            "canonical_target_form": self.canonical_target_form,
             "state_dim": self.state_dim,
             "observable_dim": self.observable_dim,
             "symmetries": list(self.symmetries),
@@ -170,7 +242,8 @@ class CanonicalSystem(ABC):
         }
 
     def __repr__(self) -> str:
-        return f"<CanonicalSystem {self.id} ({self.domain}, state_dim={self.state_dim})>"
+        return (f"<CanonicalSystem {self.id} "
+                f"({self.model_class.value}, state_dim={self.state_dim})>")
 
 
 def validate_symmetries(symmetries) -> tuple[str, ...]:

@@ -2,6 +2,8 @@
 
 **Status:** STAGE 0 design fix. Architecture, canonical-system list, signature framework, and curriculum specified before implementation. This note is the design contract for all subsequent workbench / library / identification work.
 
+**See also:** [`model_class_taxonomy.md`](./model_class_taxonomy.md) (Stage 0.5) — extends this note with `ModelClass` as a first-class concept addressing the y vs y' vs y'' conflation. Refer to that note for the per-system `model_class` + `target_form()` schema enforced from Stage 1.5 onward.
+
 **Provenance:** user (2026-05-26), after a long discussion working through (a) SCMs don't solve most SR benchmarks, (b) deep learning overparameterizes, (c) SR's loss surface is unstable with new structures, (d) the field is methodologically under-developed (PySR paper observation), (e) Kepler didn't discover laws from data alone — he had geometric priors, the right reference frame, and discovered invariances first:
 
 > "What we have to do is, do the engineering that actually evolves into a library that can identify which system it is given what we generate from the workbench. ... We should only choose the systems that provide enough information first, then we slowly add in systems that provide partial information and we use common sense to fill in the gap. We build this common sense into tessera by first learning to fit all the different systems accurately."
@@ -49,8 +51,9 @@ Information-rich, well-understood systems where ground truth is known and the SR
 | `linear_pendulum` | Small-angle pendulum | $\ddot\theta = -(g/L)\theta$ | Dimensional analysis discriminator from `harmonic_1d` |
 | `nonlinear_pendulum` | Full pendulum | $\ddot\theta = -(g/L)\sin\theta$ | Tests trig vocabulary; conservation of energy with non-quadratic potential |
 | `kepler` | Kepler problem | Inverse-square central force | Tests rotational symmetry, conservation (angular momentum, energy) |
+| `algebraic_feynman_gaussian` | Feynman I.6.20a (added Stage 1.5) | $y = \exp(-\theta^2/2)$, iid $\theta$ | Spans algebraic vs ODE/PDE discrimination required by [`model_class_taxonomy.md`](./model_class_taxonomy.md) |
 
-Ten systems. Each has well-documented analytical structure; each tests a different methodology component (smoothness, modes, conservation, multi-equation coupling, PDE-vs-ODE, trig vocabulary, multiscale). Crucially **they span the kinds of distinctions we want the identification pipeline to make**, not just the union of "famous systems."
+Eleven systems. Each has well-documented analytical structure; each tests a different methodology component (smoothness, modes, conservation, multi-equation coupling, PDE-vs-ODE, trig vocabulary, multiscale, **model-class discrimination**). Crucially **they span the kinds of distinctions we want the identification pipeline to make**, not just the union of "famous systems."
 
 ## 5. The workbench API contract
 
