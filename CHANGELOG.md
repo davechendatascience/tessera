@@ -6,6 +6,173 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Stage 0.5 — model class as a first-class concept in SR)
+
+User direction (2026-05-26): while reviewing Stage 1 tests, surfaced
+a fundamental conflation in SR — pure function, ODE, and PDE are
+mathematically distinct objects but we have been treating them as
+"fit an expression to the data" uniformly. The same observed
+trajectory $y(t)$ admits at least three valid representations
+($y = f(t)$ algebraic, $\dot y = g(y)$ first-order ODE,
+$\ddot y = h(y, \dot y)$ second-order ODE) with different fits.
+
+NEW docs/research/model_class_taxonomy.md (~250 lines)
+
+THE CONFLATION
+
+In every existing benchmark, the model class was pre-decided by data
+preparation (heat eq → pre-compute dt_U; Lorenz → pre-compute dx/dt;
+Feynman → hand inputs directly). SR currently has no mechanism to
+flag the choice or to discover the right one. A mathematician given
+a data table asks "what kind of object generated this?" — SR skips
+this step.
+
+THE TAXONOMY (in scope)
+
+  ALGEBRAIC      y = f(x)
+  DISCRETE_MAP   y_{n+1} = f(y_n)
+  ODE            dx/dt = f(x, t) on state x (higher-order reduces to first-order on extended state)
+  PDE            ∂_t u = f(u, ∂_x u, ∂_x² u, ...)
+
+Each ModelClass defines a `target_form(trajectory)` map producing
+SR-ready (features, target) arrays. Downstream SR is then
+class-agnostic — only the target_form differs per class.
+
+TERMINOLOGY CONTRACT
+
+  Model    — structural equation (∈ ModelClass)
+  Solution — trajectory satisfying the model (= existing Trajectory)
+  Fit      — expression minimizing loss (= GP output)
+
+We do NOT add a `Solution` class; `Trajectory` already serves. We DO
+add explicit `model_class` on `CanonicalSystem` and `target_form()`
+as a method.
+
+IDENTIFICATION PIPELINE UPDATE (Stage 5 contract)
+
+  Step 1 (NEW): classify model class from data (autocorrelation,
+                stencil locality, smoothness signatures)
+  Step 2: extract within-class signature
+  Step 3: match against library anchors of the same model class
+  Step 4: class-aware SR with anchor as prior
+  Step 5: multi-objective Pareto across (fit, parsimony, ...)
+  Step 6 (NEW): if multiple model classes are plausible, fit each
+                and report the Pareto front across classes
+
+The multiple-representation problem (y(t) = cos(ωt) admits three
+fits) is resolved by Step 6: report the Pareto comparison, do not
+collapse to one. The choice carries epistemic weight and should
+be explicit.
+
+EXPLICITLY DEFERRED (user scoping)
+
+  Conditional / piecewise / if-trees     → Stage 7+
+  Multi-mode / hybrid systems            → Stage 7+
+  Implicit equations F(y, y', ...) = 0   → Stage 8+
+  SDE — stochastic dynamics              → Stage 9 (BTC bridge)
+  Recursive / inductive definitions      → out of scope
+  Symbolic constants (π, 1/2, e)         → Stage 6+ separate concern
+
+STAGE 1 IMPLEMENTATION CONTRACT
+
+The note's Section 8 enumerates 8 deliverables for Stage 1.5
+(schema update): `ModelClass` enum, `model_class` field on each
+of 10 existing systems, at least one algebraic system added,
+`target_form(traj)` abstract method, `min_dt`/`min_dx`/`grid_floor`
+on `InformationRequirements`, tests exercising `target_form`,
+Stage 0 design note forward-reference.
+
+WHY NOW
+
+The schema change touches every system; adding `ModelClass`
+later means editing 10+ classes and tests. Doing it before Stage
+1.5 is a single sweep. Without explicit ModelClass, Stage 5
+identification ("which system is this?") is technically incoherent
+because "system" doesn't distinguish algebraic from PDE.
+
+Task #110 closed.
+
+### Added (Stage 1 — methodology workbench: 10 canonical systems with metadata)
+
+User direction (2026-05-26): build the workbench specified by the
+Stage 0 design note (`docs/research/methodology_workbench_and_library.md`).
+Foundation layer of the library-learning + system-identification
+framework that supersedes benchmark-chasing as tessera's primary axis.
+
+NEW SUBPACKAGE src/tessera/workbench/
+
+  __init__.py     — public API + subpackage policy
+  types.py        — CanonicalSystem ABC, Trajectory, InformationRequirements;
+                    standardized vocabularies for symmetries (7),
+                    conservation laws (5), smoothness classes (5)
+  integrators.py  — pure-numpy RK4 + forward-Euler PDE + noise application
+  systems.py      — 10 canonical-system implementations + registry
+
+THE 10 CANONICAL SYSTEMS
+
+  ODE (8):
+    harmonic_1d            simple harmonic oscillator (energy-conserving)
+    damped_harmonic_1d     with dissipation
+    vdp                    Van der Pol limit-cycle
+    lorenz63               chaotic attractor
+    fhn                    FitzHugh-Nagumo relaxation oscillator
+    linear_pendulum        small-angle (testing dim analysis)
+    nonlinear_pendulum     full pendulum (libration / rotation modes)
+    kepler                 2D inverse-square central force
+                           (energy + angular momentum conservation)
+
+  PDE (2):
+    heat_1d                Dirichlet-BC heat equation (dissipative)
+    burgers_1d             viscous Burgers' (periodic BC, shock-forming)
+
+Each declares: domain, dynamics_doc, state_dim, observable_dim,
+parameter ranges, symmetry group, conservation laws, smoothness
+class, mode count, information requirements. Standardized
+vocabularies enforced — no free-form metadata strings.
+
+API
+
+  from tessera.workbench import get_system, list_systems
+  sys = get_system("lorenz63")
+  traj = sys.generate(t_max=30.0, dt=0.01, noise_std=0.0, seed=42)
+  # Trajectory(t, state, observable, system_id, params, ic, noise_std, seed)
+
+NEW TESTS tests/workbench/test_systems.py (44 tests, all pass)
+
+Four test categories — beyond standard unit testing:
+  1. Generator correctness vs analytical solutions or conservation
+     laws (harmonic period, Kepler angular momentum + energy,
+     pendulum energy at large amplitude, etc.)
+  2. Registry/metadata contract (vocabulary enforcement)
+  3. Determinism + noise discipline (observable noise; state stays
+     ground-truth)
+  4. DISCRIMINABILITY — small-vs-large amplitude pendulums diverge
+     while small-amplitude agree with linear pendulum. Feasibility
+     check for Stage 5: confirms identification has signal to use.
+
+KNOWN STAGE 1.5 GAP — ModelClass not yet integrated
+
+Per the concurrent Stage 0.5 design note
+(`docs/research/model_class_taxonomy.md`), each canonical system
+will gain `model_class` and `target_form()` in Stage 1.5. Current
+Stage 1 ships the generators + metadata + tests as a usable
+foundation; ModelClass schema is the next commit.
+
+Also pending (Stage 1.5): at least one algebraic canonical system
+to span the discrimination, and `min_dt`/`min_dx`/`grid_floor` on
+`InformationRequirements` to record the discrete-vs-continuum gap
+for PDE identification.
+
+VERDICT
+
+Stage 1 generators are correct (44 tests pass; no regression in
+136 pre-existing tests). The workbench is the foundation layer of
+the methodology project per the Stage 0 design contract; Stage 1.5
+will retrofit ModelClass per Stage 0.5.
+
+Task #107 closed; Tasks #108-109 (Stage 2 signatures, Stage 3 info-
+sufficiency) remain pending.
+
 ### Added (CAS simplification fallback via sympy — closes structural-critique gap)
 
 User direction (2026-05-26): after the PySR-vs-tessera structural
