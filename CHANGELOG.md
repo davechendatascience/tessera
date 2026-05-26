@@ -6,6 +6,84 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Stage 2a — Tier A model-class discriminators in workbench.signatures)
+
+User direction (2026-05-26): begin Stage 2 of the methodology
+workbench, starting with the cheap upfront classifier that routes
+unknown data to the right within-class extractors before SR.
+
+NEW SUBPACKAGE src/tessera/workbench/signatures/
+
+  __init__.py          — public API
+  types.py             — Signature + SignatureValue dataclasses
+                         (value, confidence, n_samples_used; supports
+                         both Stage 5 identification reading and
+                         Stage 6 scoring deviation reading per the
+                         Stage 2.5 contract)
+  model_class.py       — Tier A: 3 discriminators + classify driver
+
+THE 3 TIER A DISCRIMINATORS
+
+  compute_permutation_invariance(traj):
+    Tests if shuffling row order changes lag-1 ACF. Pure functions
+    of iid inputs are permutation-invariant (score ~1.0); dynamical
+    systems are not (score ~0.0).
+
+  compute_autocorrelation_structure(traj):
+    Computes max time-ACF (across state components) and, for PDE-
+    shaped data, max space-ACF. Returns dict {time_acf_max, space_acf_max}.
+
+  compute_stencil_locality(traj):
+    For PDE-shaped data, finds smallest stencil half-width k such
+    that linear regression of (u[t+1] - u[t]) on u(t, x±k) reaches
+    R² > 0.99. Returns None for non-PDE-shaped or nonlinear PDE
+    (e.g., Burgers' u·u_x term defeats linear regression).
+
+DECISION LOGIC — classify_model_class(traj) -> (ModelClass, diagnostics)
+
+  Rule 1: PDE if space_acf >= 0.3 (high spatial autocorrelation;
+          stencil-locality test is a bonus but not required since
+          nonlinear PDEs fail the linear test).
+  Rule 2: ALGEBRAIC if permutation_invariance >= 0.8 AND time_acf < 0.3.
+  Rule 3: ODE if time_acf >= 0.3.
+  Rule 4: ALGEBRAIC fallback.
+
+EMPIRICAL RESULT — 11/11 canonical systems classified correctly
+
+  harmonic_1d/damped/vdp/lorenz63/fhn/linear+nonlinear_pendulum/
+  kepler → ODE (perm ~0.02, t_acf ~1.0)
+  heat_1d → PDE (perm 1.0, t_acf 0.98, s_acf 0.996, stencil k=1)
+  burgers_1d → PDE (perm 1.0, t_acf 0.995, s_acf 1.0, stencil None;
+               correctly identified via space_acf despite nonlinear
+               dynamics defeating the linear stencil test)
+  algebraic_feynman_gaussian → ALGEBRAIC (perm 0.38, t_acf 0.09)
+
+NEW TESTS tests/workbench/test_signatures_model_class.py (23 tests, all pass)
+
+  TestPermutationInvariance — algebraic high, ODE low, tiny-traj
+                              returns low confidence
+  TestAutocorrelationStructure — algebraic ~0 t_acf, ODE high t_acf,
+                                 PDE high both
+  TestStencilLocality — heat eq finds k <= 2, ODE returns None,
+                        NaN input fails safely
+  TestClassifyModelClass — parametrized over 10 dynamical systems +
+                           algebraic, all classify to declared class
+  TestSignatureValueContract — value/confidence/n_samples_used fields
+
+WHAT THIS UNLOCKS
+
+  Stage 5 identification pipeline Step 1 (classify model class) is
+  now implementable: data in → classify → route to within-class
+  extractors.
+
+  Stage 2b (next): the 8 within-class signatures (smoothness, modes,
+  effective_dim, symmetry, conservation, spectral, determinism,
+  lyapunov). Each consumes the inferred model class to decide
+  applicability (e.g., spectral content meaningless for algebraic,
+  Lyapunov meaningless without dynamics).
+
+Tasks #108 in_progress (Stage 2a done; 2b remaining).
+
 ### Added (Stage 2.5 — per-class loss families + multi-objective scoring design contract)
 
 User direction (2026-05-26): "do we need different loss for different
