@@ -49,12 +49,39 @@ from .model_class import (
     compute_autocorrelation_structure,
     compute_stencil_locality,
 )
+from .smoothness import compute_smoothness
+from .modes import compute_mode_count
+from .dimensionality import compute_effective_dimensionality
+from .symmetry import compute_symmetry
+from .conservation import compute_conservation
+from .spectral import compute_spectral_content
+from .determinism import compute_determinism
+from .lyapunov import compute_lyapunov
+from .within_class import (
+    compute_within_class_signature,
+    compute_full_signature,
+    WITHIN_CLASS_APPLICABILITY,
+)
 
 __all__ = [
     "Signature",
     "SignatureValue",
+    # Tier A
     "classify_model_class",
     "compute_permutation_invariance",
     "compute_autocorrelation_structure",
     "compute_stencil_locality",
+    # Tier B individual
+    "compute_smoothness",
+    "compute_mode_count",
+    "compute_effective_dimensionality",
+    "compute_symmetry",
+    "compute_conservation",
+    "compute_spectral_content",
+    "compute_determinism",
+    "compute_lyapunov",
+    # Aggregators
+    "compute_within_class_signature",
+    "compute_full_signature",
+    "WITHIN_CLASS_APPLICABILITY",
 ]

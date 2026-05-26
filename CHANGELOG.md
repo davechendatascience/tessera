@@ -6,6 +6,89 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Stage 2b — 8 within-class signature extractors + full-signature dispatcher)
+
+User direction (2026-05-26): complete Stage 2 by adding the 8 within-class
+signature extractors that Tier A routes to, plus the dispatcher.
+
+NEW MODULES src/tessera/workbench/signatures/
+
+  smoothness.py       — Hölder regularity via structure-function scaling
+                        S_2(tau) ~ tau^(2*alpha)
+  modes.py            — GMM + BIC sweep over k=1..max_k; subsampled to
+                        break trajectory autocorrelation
+  dimensionality.py   — PCA participation ratio + (optional) Grassberger-
+                        Procaccia correlation dimension for small ambient dim
+  symmetry.py         — pass/fail tests for time_translation, time_reversal,
+                        reflection, rotation_so2; metadata-driven candidate
+                        set per Stage 2.5 design
+  conservation.py     — search for low-degree polynomial Q(x) minimizing
+                        Var(Q on trajectory) / Var(Q on shuffled-null);
+                        sweeps degrees {1, 2, 3}
+  spectral.py         — Welch periodogram + peak_height + spectral_flatness
+                        + dominant_freq summary
+  determinism.py      — k-NN forecasting in time-delay embedding;
+                        z-score vs phase-randomized surrogate null
+  lyapunov.py         — Rosenstein algorithm for max Lyapunov exponent
+                        via nearest-neighbor distance evolution
+  within_class.py     — Dispatcher: WITHIN_CLASS_APPLICABILITY map +
+                        compute_within_class_signature() +
+                        compute_full_signature() assembler
+
+WITHIN_CLASS_APPLICABILITY
+
+  ALGEBRAIC    — smoothness, mode_count, effective_dim, symmetry only
+                 (no spectral/lyapunov/determinism/conservation — no time)
+  DISCRETE_MAP — ALGEBRAIC set + conservation + spectral + determinism
+  ODE          — all 8 signatures
+  PDE          — all 8 signatures
+
+EMPIRICAL READINGS — 11 canonical systems pass through compute_full_signature:
+
+  - smoothness: heat/burgers ~0.999 (smooth PDE); harmonic/Kepler/pendulums
+    0.6-0.97 (ODE); algebraic_feynman 0.0 (no temporal smoothness — correct
+    for iid input data, confirming the test discriminates)
+  - effective_dim: harmonic ~2.0, Lorenz ~1.87 (fractal), heat ~1.0
+    (PCA-1 dominates), algebraic ~1.0
+  - mode_count: Lorenz finds 2 (its attractor lobes); orbit-following
+    systems find higher (documented limitation — GMM measures statistical
+    density clusters, not topological mode count; refinement deferred to
+    Stage 3 via recurrence networks)
+  - conservation: Kepler finds variance_ratio < 0.5 at degree 2 (energy /
+    angular momentum present)
+  - spectral_content: harmonic finds sharp peak (peak_height > 10)
+  - determinism: harmonic z > 30 (very deterministic); algebraic correctly
+    skipped (not applicable)
+  - lyapunov: heat ~0 (dissipative); Lorenz positive (chaos; magnitude
+    needs Stage 3 calibration — current implementation produces
+    sign-correct but magnitude-imprecise estimates)
+
+KNOWN LIMITATIONS (documented for Stage 3 refinement)
+
+  - Mode count over-estimates on limit-cycle systems (vdp, pendulums)
+    because GMM clusters along the orbit. Documented in modes.py docstring.
+  - Lyapunov magnitudes are sign-correct but not calibration-grade;
+    Stage 3 sample-complexity studies will tune parameters per system.
+  - Spectral flatness is near-zero for all systems on the smoketest;
+    this is correct in principle (all systems are structured) but the
+    discriminative power between e.g. periodic vs chaotic is in the
+    peak_height field, not the flatness.
+
+NEW TESTS tests/workbench/test_signatures_within_class.py (26 tests, all pass)
+
+  Per-signature shape/sanity contracts; sensible-value tests on canonical
+  systems where ground truth is known; the full-signature assembler
+  correctly routes by model class and populates only applicable fields.
+
+REGRESSION CHECK
+
+  857 tests pass across full tessera suite (3 pre-existing skips). 94
+  Stage 1 + 23 Stage 2a + 26 Stage 2b = 143 cumulative workbench tests.
+
+Task #108 closed. Stage 2 complete. Stage 3 (info-sufficiency calibration)
+#109 remains pending; the calibration sweep will refine mode_count,
+Lyapunov, and noise-tolerance thresholds across all 11 systems.
+
 ### Added (Stage 2a — Tier A model-class discriminators in workbench.signatures)
 
 User direction (2026-05-26): begin Stage 2 of the methodology
