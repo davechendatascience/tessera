@@ -6,6 +6,72 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added (Stage 3.1 — workbench info-sufficiency calibration on all 11 systems)
+
+User direction (2026-05-28): begin Stage 3 calibration of
+`InformationRequirements` per the design contract in
+`docs/planned/methodology_workbench_and_library.md` §7.
+
+NEW benchmarks/run_workbench_info_sufficiency.py (~280 LOC)
+
+The sweep: for each canonical system, for each `n_samples` in
+[50, 100, 200, 500, 1000, 2000, 5000], for each of 3 seeds:
+  - Generate trajectory with perturbed IC (~3% multiplicative) + light
+    noise (std=0.01); this prevents the deterministic-system
+    degeneracy where fixed-seed trajectories are identical and
+    CoV across seeds = 0 by construction
+  - Run compute_full_signature(traj)
+  - Record Tier A classification correctness
+  - Record per-signature aggregated CoV across seeds
+
+Two derived gates per system:
+  - **Tier A floor**: smallest n where >= 2/3 seeds classify to
+    declared model_class
+  - **Tier B stable**: smallest n where mean Tier B CoV < 0.5
+
+The recommended `min_samples` = max(Tier A floor, Tier B stable).
+
+NEW benchmarks/results/workbench_info_sufficiency.md
+
+EMPIRICAL FINDINGS
+
+  - All 10 deterministic systems: Tier A floor = n=50 (lowest tested)
+  - Algebraic system: Tier A floor = n=100 (iid-input noise at n=50
+    flips classification 2/3 seeds to "ode")
+  - Tier B aggregate CoV stays < 0.2 from n=50 onward for most systems
+  - Current `info_min.min_samples` defaults are CONSERVATIVE — Lorenz
+    declares 2000 but Tier A is robust at 50; Kepler 500→50; FHN
+    300→50; VdP 200→50; etc.
+
+NOT AUTO-TIGHTENING `info_min` DEFAULTS (yet)
+
+The calibration shows Tier A correctness + aggregate stability, NOT
+per-signature reliability. Long-trajectory-dependent signatures
+(Lyapunov, correlation dimension) need more data than Tier A alone
+demands. Conservative defaults stay in place to avoid breaking
+downstream consumers; per-signature calibration is the Stage 3.2
+follow-up.
+
+WHY THE FIRST RUN HAD DEGENERATE COV=0
+
+The first version of the sweep used fixed `default_ic()` and
+`noise_std=0`, so deterministic systems produced byte-identical
+trajectories across seeds → CoV across seeds = 0 by construction.
+The fix (IC perturbation + observation noise) makes the stability
+measurement actually measure stability under data variation. Docu-
+mented in the script comments + report's "Why we ran twice" section.
+
+VERDICT
+
+  - Tier A classifier is robust well below current `info_min`
+    defaults across all 11 systems
+  - Methodology is validated; Stage 3.2 (per-signature calibration)
+    is the natural follow-up
+  - Information-sufficiency framework now has its first empirical
+    evidence layer
+
+Task #109 in progress (Stage 3.1 done; 3.2 remaining as scoped above).
+
 ### Changed (Pruned docs/research/ — moved 13 notes to planned/ or shipped/)
 
 User direction (2026-05-26): research/ had grown to 24 notes; some were
