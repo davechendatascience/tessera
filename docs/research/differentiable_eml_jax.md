@@ -196,11 +196,49 @@ Knuth shows it beats blind/general methods. It does not repeal the
 exponential; it makes the *structured, low-complexity* regime fast and
 guaranteed, which is the regime tessera's detectors certify.
 
-## Status
+## Resolution (2026-05-30): Method D graduated → `csp_sr.py`, gradient-free
 
-- Status: **substrate built, restart-only optimization rejected**;
-  awaiting paradigm decision (A-upgraded / B / C) before real
-  optimization engineering.
+The four methods were explored on the shared substrate. A+ (relaxation)
+was weakest; B/C (intelligent search) recovered targets reliably; **D
+(CSP enumeration + sparse linear fit) won** — and it is **gradient-free**.
+The GP-family searches (B/C) are slow; D is fast, deterministic, and
+emits clean parsimonious forms. Decision: drop the comparison, commit to
+D, port it to tessera's real vocabulary.
+
+`tessera/experimental/csp_sr.py` (the graduated method):
+- Enumerate CONST-FREE tessera `Expr` trees over `BIN_OP_FNS`/`UN_OP_FNS`
+  (symmetry-broken, numerically deduped) — the dictionary / CSP.
+- Fit `y ≈ c0 + Σ cₖ·φₖ(x)` by orthogonal matching pursuit (closed-form
+  least squares per step) with a parsimony tie-break.
+- Output is a real tessera `Expr`; verified to reproduce the fit through
+  `tessera.evaluate`. Validated on synthetic incl. phase-shift / affine.
+
+**Do we still need differentiability? — No, for this class.** Once the
+structure is enumerated, linear-in-parameter constants are solved EXACTLY
+by least squares (strictly better than gradient descent). The linear
+basis already captures affine offset, amplitude, and phase
+(A·sin+B·cos = C·sin(x+φ)). Differentiability would return ONLY as a
+cheap 1-step Gauss-Newton refine for a constant buried *inside* a
+nonlinearity (e.g. `sin(c·x)`, non-integer c) — a narrow tool, not the
+foundation. So "diff_sr" is a misnomer; the framework is enumerative.
+
+**CPU/GPU.** CPU-friendly as written (pure numpy; fast at current scale).
+GPU-enhanceable at SCALE: the two heavy parts are (a) building the
+feature matrix Φ — a batched array computation best done with the
+opcode-tape interpreter (`symbolic_interp.py`, compile-once) on device,
+and (b) the OMP correlation `Φᵀr` + lstsq — dense BLAS. Symbolic
+enumeration stays host-side (cheap). tessera's ops are backend-
+polymorphic (`array_module`), so the port is mechanical; the win is for
+large N / large dictionaries, not the small benchmarks.
+
+NEXT: test `csp_sr` on Feynman, dynamical systems (SINDy's home turf),
+and MNIST (needs a feature layer — raw 784-pixel enumeration is
+infeasible; fit per-class scorers over reduced features).
+
+## Status (superseded)
+
+- Earlier status: substrate built, restart-only optimization rejected.
+  Now resolved — see above.
 - Graduation criterion: D1 holds on the three simple targets AND on a
   handful of Feynman equations, with best-of-R clearly beating
   single-init; then a head-to-head vs GP on speed + recovery.
