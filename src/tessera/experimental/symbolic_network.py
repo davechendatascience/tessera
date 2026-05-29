@@ -855,6 +855,26 @@ def _scores(network: SymbolicNetwork, images: np.ndarray,
     return evaluate_network_batch(network, images)
 
 
+def _loss_from_scores(
+    scores: np.ndarray, labels: np.ndarray, complexity: int,
+    parsimony: float, complexity_divisor: float,
+) -> float:
+    """Cross-entropy + parsimony penalty from a precomputed score matrix."""
+    if not np.isfinite(scores).all():
+        return float("inf")
+    log_probs = _log_softmax(scores)
+    n = scores.shape[0]
+    true_log_probs = log_probs[np.arange(n), labels.astype(int)]
+    ce = float(-np.mean(true_log_probs))
+    penalty = parsimony * (complexity / max(complexity_divisor, 1e-9))
+    return ce + penalty
+
+
+def _acc_from_scores(scores: np.ndarray, labels: np.ndarray) -> float:
+    """argmax accuracy from a precomputed score matrix."""
+    return float(np.mean(scores.argmax(axis=-1) == labels.astype(int)))
+
+
 def network_loss(
     network: SymbolicNetwork,
     images, labels: np.ndarray,
@@ -876,14 +896,8 @@ def network_loss(
     Returns +inf on non-finite scores (selection drops broken candidates).
     """
     scores = _scores(network, images, use_jax=use_jax)
-    if not np.isfinite(scores).all():
-        return float("inf")
-    log_probs = _log_softmax(scores)
-    n = scores.shape[0]
-    true_log_probs = log_probs[np.arange(n), labels.astype(int)]
-    ce = float(-np.mean(true_log_probs))
-    penalty = parsimony * (network.complexity / max(complexity_divisor, 1e-9))
-    return ce + penalty
+    return _loss_from_scores(scores, labels, network.complexity,
+                             parsimony, complexity_divisor)
 
 
 def network_accuracy(
@@ -893,8 +907,7 @@ def network_accuracy(
 ) -> float:
     """argmax(scores) vs labels."""
     scores = _scores(network, images, use_jax=use_jax)
-    preds = scores.argmax(axis=-1)
-    return float(np.mean(preds == labels.astype(int)))
+    return _acc_from_scores(scores, labels)
 
 
 # ---------------------------------------------------------------------
@@ -969,10 +982,14 @@ def run_network_gp(
     cdiv = float(cfg.n_classes) if cfg.normalize_parsimony_by_classes else 1.0
 
     def _score(net: SymbolicNetwork) -> NetworkCandidate:
-        loss = network_loss(net, train_ch, labels_train,
-                            parsimony=cfg.parsimony, use_jax=use_jax,
-                            complexity_divisor=cdiv)
-        acc = network_accuracy(net, train_ch, labels_train, use_jax=use_jax)
+        # Single forward pass; derive BOTH loss and accuracy from it.
+        # (Previously network_loss + network_accuracy each ran a full
+        # forward pass — 2× the work. Provably identical: both are pure
+        # functions of the same score matrix.)
+        scores = _scores(net, train_ch, use_jax=use_jax)
+        loss = _loss_from_scores(scores, labels_train, net.complexity,
+                                 cfg.parsimony, cdiv)
+        acc = _acc_from_scores(scores, labels_train)
         return NetworkCandidate(network=net, loss=loss, accuracy=acc)
 
     pop: list[NetworkCandidate] = []
