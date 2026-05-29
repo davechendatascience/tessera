@@ -303,14 +303,31 @@ def _compile_feature_tree_jax(tree: Node, K: int):
     return jitted
 
 
+def stack_channels_jax(data, channel_names: tuple[str, ...]):
+    """Build a device-resident (N, C, H, W) channel stack from a numpy
+    channel dict / array. Call ONCE per dataset and reuse across many
+    network evaluations to avoid re-transferring fixed data host→device
+    on every eval (the main per-eval JAX overhead after JIT compile)."""
+    import jax.numpy as jnp
+    channels = _prepare_channels(data, channel_names)
+    return jnp.stack(
+        [jnp.asarray(channels[name]) for name in channel_names], axis=1
+    )
+
+
 def evaluate_network_jax_batch(
-    network: "SymbolicNetwork", data,
+    network: "SymbolicNetwork", data=None, *, stacked=None,
 ) -> Optional[np.ndarray]:
     """JAX batched evaluation. Returns scores of shape (N, n_classes)
     as numpy array, or None if any tree in the network has FunctionalOp
     / 2D (caller should fall back to numpy).
 
-    `data` is a bare (N,H,W) array or a {channel: (N,H,W)} dict.
+    Provide EITHER:
+      - `data`: a bare (N,H,W) array or {channel: (N,H,W)} dict (will be
+        stacked + transferred to device on this call), OR
+      - `stacked`: a pre-built device-resident (N,C,H,W) array from
+        `stack_channels_jax` — avoids the per-call host→device transfer.
+        The GP hot loop uses this path.
     """
     if not _jax_available():
         return None
@@ -318,11 +335,8 @@ def evaluate_network_jax_batch(
     import jax.numpy as jnp
 
     channel_names = network.input_channels
-    channels = _prepare_channels(data, channel_names)
-    # Stack channels in input_channels order → (N, C, H, W)
-    stacked = jnp.stack(
-        [jnp.asarray(channels[name]) for name in channel_names], axis=1
-    )
+    if stacked is None:
+        stacked = stack_channels_jax(data, channel_names)
 
     feature_cols = []
     for tree in network.layer_1_trees:
@@ -974,19 +988,32 @@ def run_network_gp(
 
     # Prepare channels ONCE (auto-computes the spatial bank if the config
     # asks for multi-channel inputs but raw images are passed). The hot
-    # loop then re-uses these dicts (no per-eval recompute).
+    # loop then re-uses these (no per-eval recompute).
     train_ch = _prepare_channels(images_train, cfg.input_channels)
     test_ch = (_prepare_channels(images_test, cfg.input_channels)
                if images_test is not None else None)
 
+    # Device-resident channel stacks (transferred host→device ONCE).
+    # Avoids re-uploading the fixed channel data on every network eval —
+    # the dominant per-eval JAX overhead on GPU after JIT compilation.
+    train_stacked = stack_channels_jax(train_ch, cfg.input_channels) if use_jax else None
+    test_stacked = (stack_channels_jax(test_ch, cfg.input_channels)
+                    if (use_jax and test_ch is not None) else None)
+
     cdiv = float(cfg.n_classes) if cfg.normalize_parsimony_by_classes else 1.0
+
+    def _get_scores(net: SymbolicNetwork, numpy_ch, jax_stacked):
+        """Score matrix (N, n_classes). Uses the device-resident stack on
+        the JAX path; falls back to numpy for non-pointwise trees."""
+        if use_jax:
+            s = evaluate_network_jax_batch(net, stacked=jax_stacked)
+            if s is not None:
+                return s
+        return evaluate_network_batch(net, numpy_ch)
 
     def _score(net: SymbolicNetwork) -> NetworkCandidate:
         # Single forward pass; derive BOTH loss and accuracy from it.
-        # (Previously network_loss + network_accuracy each ran a full
-        # forward pass — 2× the work. Provably identical: both are pure
-        # functions of the same score matrix.)
-        scores = _scores(net, train_ch, use_jax=use_jax)
+        scores = _get_scores(net, train_ch, train_stacked)
         loss = _loss_from_scores(scores, labels_train, net.complexity,
                                  cfg.parsimony, cdiv)
         acc = _acc_from_scores(scores, labels_train)
@@ -1057,8 +1084,8 @@ def run_network_gp(
 
         test_acc = float("nan")
         if test_ch is not None and labels_test is not None:
-            test_acc = network_accuracy(best.network, test_ch, labels_test,
-                                         use_jax=use_jax)
+            test_scores = _get_scores(best.network, test_ch, test_stacked)
+            test_acc = _acc_from_scores(test_scores, labels_test)
 
         mean_loss = float(np.mean([c.loss for c in pop
                                      if math.isfinite(c.loss)] or [float("inf")]))
@@ -1096,6 +1123,7 @@ __all__ = [
     "evaluate_network",
     "evaluate_network_batch",
     "evaluate_network_jax_batch",
+    "stack_channels_jax",
     "clear_jax_tree_cache",
     "random_network",
     "warm_start_from_binary",
