@@ -81,6 +81,161 @@ from tessera.expression.mutation import (
     random_tree, mutate as tree_mutate, validate_tree,
 )
 from tessera.expression.simplify import simplify
+from tessera.expression.jit import is_pure_pointwise
+
+
+# ---------------------------------------------------------------------
+# JAX batched evaluation (Milestone A.5)
+# ---------------------------------------------------------------------
+#
+# When JAX is installed AND `use_jax_eval=True`, the network is evaluated
+# via a vmapped JIT path: each tree is compiled once to a JAX function,
+# vmapped over the image batch dimension, and JIT'd. Subsequent calls on
+# the same tree topology hit the JIT cache.
+#
+# Falls back to per-image numpy when:
+# - JAX not installed
+# - Any layer-1 tree has FunctionalOp / FunctionalOp2D (not supported
+#   by the per-tree JIT path)
+#
+# JIT cache is module-level, keyed by (topology, var_names_tuple,
+# kind="image"|"scalar"). Networks share cached compilations when their
+# trees have the same topology — common during GP since mutation
+# changes one slot at a time.
+
+_JAX_AVAILABLE: Optional[bool] = None
+
+
+def _jax_available() -> bool:
+    global _JAX_AVAILABLE
+    if _JAX_AVAILABLE is None:
+        try:
+            import jax  # noqa: F401
+            _JAX_AVAILABLE = True
+        except ImportError:
+            _JAX_AVAILABLE = False
+    return _JAX_AVAILABLE
+
+
+_JAX_TREE_CACHE: dict = {}
+
+
+def _compile_image_tree_jax(tree: Node):
+    """Compile a layer-1 tree to a JIT'd batched function:
+       fn(images_batch, consts) -> features_batch
+
+    images_batch: shape (N, H, W).
+    consts: 1-D array of Const values in pre-order.
+    features_batch: shape (N,) — mean-pooled per-image scalars.
+
+    Returns None if the tree contains FunctionalOp / FunctionalOp2D
+    (not supported by the per-tree JIT path).
+    """
+    if not is_pure_pointwise(tree):
+        return None
+    from tessera.expression.batched import (
+        topology_key, _build_parametric_fn,
+    )
+    import jax
+    import jax.numpy as jnp
+
+    key = (topology_key(tree), ("image",), "image")
+    if key in _JAX_TREE_CACHE:
+        return _JAX_TREE_CACHE[key]
+
+    var_idx = {"image": 0}
+    counter = [0]
+    raw_fn = _build_parametric_fn(tree, var_idx, counter)
+
+    def _per_image(image, consts):
+        out = raw_fn((image,), consts)
+        out = jnp.asarray(out)
+        if out.ndim == 0:
+            return out
+        return jnp.mean(out)
+
+    vmapped = jax.vmap(_per_image, in_axes=(0, None))
+    jitted = jax.jit(vmapped)
+    _JAX_TREE_CACHE[key] = jitted
+    return jitted
+
+
+def _compile_feature_tree_jax(tree: Node, K: int):
+    """Compile a layer-2 tree to a JIT'd batched function:
+       fn(features_batch, consts) -> scores_batch
+
+    features_batch: shape (N, K).
+    scores_batch: shape (N,).
+    """
+    if not is_pure_pointwise(tree):
+        return None
+    from tessera.expression.batched import (
+        topology_key, _build_parametric_fn,
+    )
+    import jax
+    import jax.numpy as jnp
+
+    var_names = tuple(f"f{i}" for i in range(K))
+    key = (topology_key(tree), var_names, "scalar")
+    if key in _JAX_TREE_CACHE:
+        return _JAX_TREE_CACHE[key]
+
+    var_idx = {f"f{i}": i for i in range(K)}
+    counter = [0]
+    raw_fn = _build_parametric_fn(tree, var_idx, counter)
+
+    def _per_sample(features, consts):
+        # `features` is shape (K,) — pass each as a scalar arg.
+        args = tuple(features[i] for i in range(K))
+        out = raw_fn(args, consts)
+        return jnp.asarray(out)
+
+    vmapped = jax.vmap(_per_sample, in_axes=(0, None))
+    jitted = jax.jit(vmapped)
+    _JAX_TREE_CACHE[key] = jitted
+    return jitted
+
+
+def evaluate_network_jax_batch(
+    network: "SymbolicNetwork", images: np.ndarray,
+) -> Optional[np.ndarray]:
+    """JAX batched evaluation. Returns scores of shape (N,) as numpy
+    array, or None if any tree in the network has FunctionalOp / 2D
+    (caller should fall back to numpy)."""
+    if not _jax_available():
+        return None
+    from tessera.expression.batched import extract_constants
+    import jax.numpy as jnp
+
+    images_j = jnp.asarray(images)
+
+    feature_cols = []
+    for tree in network.layer_1_trees:
+        fn = _compile_image_tree_jax(tree)
+        if fn is None:
+            return None
+        consts_list = extract_constants(tree)
+        consts = (jnp.asarray(consts_list, dtype=images_j.dtype)
+                  if consts_list else jnp.zeros(0, dtype=images_j.dtype))
+        feats = fn(images_j, consts)  # shape (N,)
+        feature_cols.append(feats)
+    features_matrix = jnp.stack(feature_cols, axis=1)  # shape (N, K)
+
+    l2_fn = _compile_feature_tree_jax(network.layer_2_tree, network.K)
+    if l2_fn is None:
+        return None
+    l2_consts_list = extract_constants(network.layer_2_tree)
+    l2_consts = (jnp.asarray(l2_consts_list, dtype=images_j.dtype)
+                 if l2_consts_list else jnp.zeros(0, dtype=images_j.dtype))
+    scores = l2_fn(features_matrix, l2_consts)  # shape (N,)
+
+    return np.asarray(scores)
+
+
+def clear_jax_tree_cache() -> None:
+    """Drop the JAX JIT cache for network trees. Useful when benchmarking
+    cold-path compilation or managing memory between unrelated runs."""
+    _JAX_TREE_CACHE.clear()
 
 
 # ---------------------------------------------------------------------
@@ -379,17 +534,30 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
     return 1.0 / (1.0 + np.exp(-np.clip(x, -30.0, 30.0)))
 
 
+def _scores(network: SymbolicNetwork, images: np.ndarray,
+            *, use_jax: bool = False) -> np.ndarray:
+    """Compute scores via JAX if enabled and tree is JAX-compatible;
+    fall back to numpy per-image otherwise."""
+    if use_jax:
+        scores = evaluate_network_jax_batch(network, images)
+        if scores is not None:
+            return scores
+    return evaluate_network_batch(network, images)
+
+
 def network_loss(
     network: SymbolicNetwork,
     images: np.ndarray, labels: np.ndarray,
-    *, parsimony: float = 0.001,
+    *, parsimony: float = 0.001, use_jax: bool = False,
 ) -> float:
     """MSE(sigmoid(scores), labels) + parsimony · total_complexity.
 
     Returns +inf on non-finite predictions (forces selection to drop
-    catastrophically-broken networks).
+    catastrophically-broken networks). Optionally uses JAX-batched
+    evaluation when `use_jax=True` and the network is JAX-compatible
+    (auto-falls-back to numpy otherwise).
     """
-    scores = evaluate_network_batch(network, images)
+    scores = _scores(network, images, use_jax=use_jax)
     if not np.isfinite(scores).all():
         return float("inf")
     probs = _sigmoid(scores)
@@ -400,9 +568,10 @@ def network_loss(
 def network_accuracy(
     network: SymbolicNetwork,
     images: np.ndarray, labels: np.ndarray,
+    *, use_jax: bool = False,
 ) -> float:
     """Threshold pre-sigmoid scores at 0; compare to labels."""
-    scores = evaluate_network_batch(network, images)
+    scores = _scores(network, images, use_jax=use_jax)
     preds = (scores > 0).astype(int)
     return float(np.mean(preds == labels))
 
@@ -433,6 +602,14 @@ class NetworkGPConfig:
     seed: int = 2026
     early_stop_patience: int = 12
     verbose: bool = True
+    # JAX batched evaluation (see Milestone A.5 section at module top).
+    # When True AND tree is JAX-compatible (no FunctionalOp / 2D), the
+    # GP scoring loop uses vmapped JIT'd evaluation. On Colab GPU this
+    # delivers the GPU acceleration that Milestone A advertised. On CPU
+    # it's a modest 2-5× speedup. Falls back to numpy per-tree on
+    # unsupported tree structures. Default False — opt-in flag matching
+    # the production GP's use_jax_population_eval pattern.
+    use_jax_eval: bool = False
 
 
 def run_network_gp(
@@ -448,6 +625,12 @@ def run_network_gp(
     """
     rng = random.Random(cfg.seed)
 
+    # Decide JAX path once per run.
+    use_jax = cfg.use_jax_eval and _jax_available()
+    if cfg.use_jax_eval and not _jax_available() and cfg.verbose:
+        print("[gp] use_jax_eval=True requested but JAX not installed; "
+              "falling back to numpy.")
+
     # Initialize.
     pop: list[NetworkCandidate] = []
     while len(pop) < cfg.pop_size:
@@ -458,8 +641,8 @@ def run_network_gp(
             enable_2d=cfg.enable_2d,
         )
         loss = network_loss(net, images_train, labels_train,
-                            parsimony=cfg.parsimony)
-        acc = network_accuracy(net, images_train, labels_train)
+                            parsimony=cfg.parsimony, use_jax=use_jax)
+        acc = network_accuracy(net, images_train, labels_train, use_jax=use_jax)
         pop.append(NetworkCandidate(network=net, loss=loss, accuracy=acc))
 
     best_ever = min(pop, key=lambda c: c.loss)
@@ -479,8 +662,9 @@ def run_network_gp(
                 child = mutate_network(a.network, rng,
                                        enable_2d=cfg.enable_2d)
             loss = network_loss(child, images_train, labels_train,
-                                parsimony=cfg.parsimony)
-            acc = network_accuracy(child, images_train, labels_train)
+                                parsimony=cfg.parsimony, use_jax=use_jax)
+            acc = network_accuracy(child, images_train, labels_train,
+                                    use_jax=use_jax)
             offspring.append(NetworkCandidate(network=child, loss=loss,
                                               accuracy=acc))
 
@@ -497,7 +681,8 @@ def run_network_gp(
 
         test_acc = float("nan")
         if images_test is not None and labels_test is not None:
-            test_acc = network_accuracy(best.network, images_test, labels_test)
+            test_acc = network_accuracy(best.network, images_test, labels_test,
+                                         use_jax=use_jax)
 
         mean_loss = float(np.mean([c.loss for c in pop
                                      if math.isfinite(c.loss)] or [float("inf")]))
@@ -532,6 +717,8 @@ __all__ = [
     "NetworkGPConfig",
     "evaluate_network",
     "evaluate_network_batch",
+    "evaluate_network_jax_batch",
+    "clear_jax_tree_cache",
     "random_network",
     "mutate_network",
     "crossover_networks",

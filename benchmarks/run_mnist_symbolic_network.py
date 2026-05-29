@@ -79,6 +79,9 @@ def main(argv=None) -> int:
     p.add_argument("--parsimony", type=float, default=0.002)
     p.add_argument("--no_2d", action="store_true",
                    help="Disable FunctionalOp2D in layer-1 random trees.")
+    p.add_argument("--jax", action="store_true",
+                   help="Enable JAX-batched evaluation (vmap over images, "
+                        "JIT'd per tree). Required for Colab GPU.")
     args = p.parse_args(argv)
 
     imgs_tr, labels_tr, imgs_te, labels_te = load_mnist_pair(
@@ -97,6 +100,7 @@ def main(argv=None) -> int:
         tournament_size=3, crossover_rate=0.3,
         seed=args.seed, early_stop_patience=12,
         verbose=True,
+        use_jax_eval=args.jax,
     )
     print(f"\n[gp] pop={cfg.pop_size}, gens={cfg.n_gens}, K={cfg.K}, "
           f"enable_2d={cfg.enable_2d}")
