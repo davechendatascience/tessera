@@ -43,7 +43,7 @@ import numpy as np
 
 from tessera.expression.tree import (
     Node, Var, Const, BinOp, UnOp,
-    BIN_OP_FNS, UN_OP_FNS, complexity,
+    BIN_OP_FNS, UN_OP_FNS, complexity, evaluate,
 )
 
 
@@ -557,6 +557,81 @@ def discover(env: Dict[str, np.ndarray], y: np.ndarray,
     )
 
 
+# --------------------------------------------------------------------
+# Stacked / boosted csp_sr — "csp_sr for every layer", no backprop
+# --------------------------------------------------------------------
+# csp_sr fits ONE target from fixed inputs, so it cannot assign credit
+# across latent layers the way backprop does. But you can use it for
+# EVERY layer if each layer is SUPERVISED: residual stacking. Layer L
+# fits the running residual (y − Σ_{j<L} pred_j); its output is appended
+# as a NEW feature so later layers can compose on it (a real cascade).
+# Every layer has a target ⇒ no backprop. The combined model is additive
+# and composes to a single self-contained tessera Expr.
+#
+# This is gradient-free deep symbolic regression (symbolic gradient
+# boosting + feature augmentation). It is NOT a universal backprop
+# replacement — it learns supervised-per-layer (additive) rather than
+# arbitrary end-to-end latent representations — but it deepens the fit
+# beyond what one shallow layer can reach.
+
+@dataclass
+class BoostedResult:
+    layers: List[CSPSRResult]
+    expr: Node               # combined self-contained tessera Expr
+    r2: float
+    layer_r2: List[float]
+
+
+def _substitute(node: Node, subs: Dict[str, Node]) -> Node:
+    """Replace Var(name) with subs[name] (a Node) recursively — used to
+    inline a layer's augmented features into a self-contained expression."""
+    if isinstance(node, Var):
+        return subs.get(node.name, node)
+    if isinstance(node, Const):
+        return node
+    if isinstance(node, UnOp):
+        return UnOp(node.op, _substitute(node.a, subs))
+    return BinOp(node.op, _substitute(node.a, subs), _substitute(node.b, subs))
+
+
+def discover_boosted(env: Dict[str, np.ndarray], y: np.ndarray,
+                     n_layers: int = 3, cfg: Optional[CSPSRConfig] = None,
+                     lr: float = 1.0, augment: bool = True,
+                     log: Callable[[str], None] = lambda s: None) -> BoostedResult:
+    """Stacked csp_sr: each layer fits the running residual with csp_sr,
+    optionally augmenting features with the previous layer's output.
+    Gradient-free; deepens the fit beyond a single shallow layer.
+
+    Returns a BoostedResult whose `.expr` is a single tessera Expr (the
+    additive composition of all layers, with augmented features inlined)."""
+    cfg = cfg or CSPSRConfig()
+    y = np.asarray(y, dtype=np.float64)
+    ec = {k: np.asarray(v, dtype=np.float64) for k, v in env.items()}
+    ss = float(np.sum((y - y.mean()) ** 2)) + 1e-30
+    total = np.zeros_like(y)
+    layers, layer_exprs, layer_r2, subs = [], [], [], {}
+    for L in range(n_layers):
+        res = discover(ec, y - total, cfg, log)
+        pred = np.asarray(evaluate(res.expr, ec), dtype=np.float64)
+        total = total + lr * pred
+        layers.append(res)
+        comp = _substitute(res.expr, subs)            # inline prior features
+        layer_exprs.append(comp if lr == 1.0
+                           else BinOp("mul", Const(float(lr)), comp))
+        layer_r2.append(float(1.0 - np.sum((y - total) ** 2) / ss))
+        log(f"layer {L}: cumulative R2={layer_r2[-1]:.4f}")
+        if augment and L < n_layers - 1:
+            ec = {**ec, f"h{L}": pred}
+            subs = {**subs, f"h{L}": comp}
+        if layer_r2[-1] > cfg.recover_thresh:
+            break
+    expr = layer_exprs[0]
+    for e in layer_exprs[1:]:
+        expr = BinOp("add", expr, e)
+    return BoostedResult(layers=layers, expr=expr,
+                         r2=layer_r2[-1], layer_r2=layer_r2)
+
+
 def expr_to_str(n: Node) -> str:
     """Readable infix-ish string for an Expr (independent of tessera's
     own printer, which we don't depend on here)."""
@@ -571,5 +646,6 @@ def expr_to_str(n: Node) -> str:
 
 __all__ = [
     "CSPSRConfig", "CSPSRResult", "discover", "expr_to_str",
+    "BoostedResult", "discover_boosted",
     "DEFAULT_UNARY", "DEFAULT_BINARY",
 ]
