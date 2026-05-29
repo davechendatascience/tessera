@@ -315,8 +315,63 @@ def stack_channels_jax(data, channel_names: tuple[str, ...]):
     )
 
 
+def _pool_regions_jnp(field, n_regions: int):
+    """Pool a (N, H, W) field into (N, n_regions) regional means (JAX)."""
+    import jax.numpy as jnp
+    if n_regions == 1:
+        return jnp.mean(field, axis=(1, 2))[:, None]
+    side = int(round(math.sqrt(n_regions)))
+    N, H, W = field.shape
+    hs, ws = H // side, W // side
+    cropped = field[:, : side * hs, : side * ws]
+    blocked = cropped.reshape(N, side, hs, side, ws)
+    return jnp.mean(blocked, axis=(2, 4)).reshape(N, n_regions)
+
+
+def _evaluate_via_interpreter(
+    network: "SymbolicNetwork", stacked, max_nodes: int,
+) -> Optional[np.ndarray]:
+    """Evaluate the whole network via the opcode-tape interpreter.
+
+    `stacked`: (N, C, H, W) device array. Returns (N, n_classes) numpy
+    scores, or None if any tree can't be encoded (caller falls back to
+    the per-tree JIT path).
+
+    Compiles the interpreter ONCE (per element-shape), reused for every
+    tree — instead of one XLA compile per distinct tree topology. The
+    win is on GPU, where per-topology compilation dominates.
+    """
+    import jax.numpy as jnp
+    from tessera.experimental.symbolic_interp import encode_trees, run_trees
+
+    channel_names = network.input_channels
+    var_index = {n: i for i, n in enumerate(channel_names)}
+    l1_tapes = encode_trees(list(network.layer_1_trees), var_index, max_nodes)
+    if l1_tapes is None:
+        return None
+
+    nfeat = network.n_features
+    feat_index = {f"f{i}": i for i in range(nfeat)}
+    l2_tapes = encode_trees(list(network.layer_2_trees), feat_index, max_nodes)
+    if l2_tapes is None:
+        return None
+
+    # Layer 1: var_values channel-major (C, N, H, W).
+    vv1 = jnp.transpose(stacked, (1, 0, 2, 3))
+    fields = run_trees(l1_tapes, vv1, max_nodes)            # K × (N, H, W)
+    pooled = [_pool_regions_jnp(f, network.n_regions) for f in fields]
+    features = jnp.concatenate(pooled, axis=1)             # (N, K·n_regions)
+
+    # Layer 2: var_values feature-major (n_features, N).
+    vv2 = jnp.transpose(features, (1, 0))
+    score_cols = run_trees(l2_tapes, vv2, max_nodes)       # n_classes × (N,)
+    scores = jnp.stack(score_cols, axis=1)                # (N, n_classes)
+    return np.asarray(scores)
+
+
 def evaluate_network_jax_batch(
     network: "SymbolicNetwork", data=None, *, stacked=None,
+    use_interpreter: bool = False, interp_max_nodes: int = 40,
 ) -> Optional[np.ndarray]:
     """JAX batched evaluation. Returns scores of shape (N, n_classes)
     as numpy array, or None if any tree in the network has FunctionalOp
@@ -337,6 +392,13 @@ def evaluate_network_jax_batch(
     channel_names = network.input_channels
     if stacked is None:
         stacked = stack_channels_jax(data, channel_names)
+
+    # Opcode-tape interpreter path (compile-once). Falls through to the
+    # per-tree JIT path if any tree can't be encoded.
+    if use_interpreter:
+        r = _evaluate_via_interpreter(network, stacked, interp_max_nodes)
+        if r is not None:
+            return r
 
     feature_cols = []
     for tree in network.layer_1_trees:
@@ -791,15 +853,24 @@ def mutate_network(
     class_idx = slot - network.K
     parent = network.layer_2_trees[class_idx]
     feature_names = [f"f{i}" for i in range(network.n_features)]
-    try:
-        new_tree = tree_mutate(
-            [parent], rng, feature_names,
-            pointwise_only=True, enable_2d=False,
-        )
-    except Exception:
-        return network
-    if new_tree is None:
-        return network
+    new_tree = None
+    for _ in range(5):
+        try:
+            cand = tree_mutate(
+                [parent], rng, feature_names,
+                pointwise_only=True, enable_2d=False,
+            )
+        except Exception:
+            return network
+        if cand is None:
+            return network
+        # reduce_* collapses a per-sample scalar feature → meaningless
+        # in layer 2, AND breaks the opcode-tape interpreter (which
+        # assumes fixed element shape). Retry to avoid it.
+        if not _tree_uses_reduce(cand):
+            new_tree = cand
+            break
+        new_tree = cand
     try:
         new_tree = simplify(new_tree)
     except Exception:
@@ -957,6 +1028,11 @@ class NetworkGPConfig:
     verbose: bool = True
     # JAX batched evaluation (see Milestone A.5 section at module top).
     use_jax_eval: bool = False
+    # Opcode-tape interpreter (compile-once for all trees). Requires
+    # use_jax_eval. Eliminates per-topology XLA compilation — the
+    # dominant cost on GPU. See tessera.experimental.symbolic_interp.
+    use_interpreter: bool = False
+    interpreter_max_nodes: int = 40   # >= MAX_COMPLEXITY covers all valid trees
 
 
 def run_network_gp(
@@ -1004,9 +1080,14 @@ def run_network_gp(
 
     def _get_scores(net: SymbolicNetwork, numpy_ch, jax_stacked):
         """Score matrix (N, n_classes). Uses the device-resident stack on
-        the JAX path; falls back to numpy for non-pointwise trees."""
+        the JAX path (interpreter if enabled); falls back to numpy for
+        non-pointwise trees."""
         if use_jax:
-            s = evaluate_network_jax_batch(net, stacked=jax_stacked)
+            s = evaluate_network_jax_batch(
+                net, stacked=jax_stacked,
+                use_interpreter=cfg.use_interpreter,
+                interp_max_nodes=cfg.interpreter_max_nodes,
+            )
             if s is not None:
                 return s
         return evaluate_network_batch(net, numpy_ch)
@@ -1063,13 +1144,10 @@ def run_network_gp(
             else:
                 child = mutate_network(a.network, rng,
                                        enable_2d=cfg.enable_2d)
-            loss = network_loss(child, train_ch, labels_train,
-                                parsimony=cfg.parsimony, use_jax=use_jax,
-                                complexity_divisor=cdiv)
-            acc = network_accuracy(child, train_ch, labels_train,
-                                    use_jax=use_jax)
-            offspring.append(NetworkCandidate(network=child, loss=loss,
-                                              accuracy=acc))
+            # Use _score (single forward pass, device-resident stack,
+            # interpreter path) — NOT the public network_loss/accuracy,
+            # which would double-eval and bypass the interpreter.
+            offspring.append(_score(child))
 
         combined = pop + offspring
         combined.sort(key=lambda c: c.loss)
