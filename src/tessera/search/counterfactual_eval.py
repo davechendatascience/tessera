@@ -1,93 +1,99 @@
-"""Counterfactual evaluation as post-hoc selector (Conjecture C5).
+"""Counterfactual evaluation as a post-hoc selector for Pareto-front candidates.
 
-Provenance: C5 from `docs/research/process_discovery_sr.md` §6.5.
-Theoretical pre-analysis: `docs/research/c5_counterfactual_eval_analysis.md`.
+Lifecycle status
+----------------
+**SHIPPED 2026-05-29** (graduated from `tessera.experimental.counterfactual_eval`).
 
-Status: **VALIDATED** on heat equation (2026-05-26). Counterfactual
-        ranking reliably identifies mechanism-capturing candidates from
-        the Pareto front (2/2 when present); produces no false positives
-        (0/3 when absent); produces Pareto-strict improvements over
-        train-loss selection in at least 1/5 seeds. CF score median ≤ 1.5
-        cleanly separates mechanism (C/C-partial) from non-mechanism (A).
-        This is the first VALIDATED-POSITIVE conjecture in the basket
-        (C1/C3/C4/C6 were falsified, partial, or validated-as-negative).
-        See `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`.
+History: originally C5 from `docs/research/process_discovery_sr.md` §6.5.
+Theoretical pre-analysis: `docs/shipped/c5_counterfactual_eval_analysis.md`
+(moved to shipped/ when validation completed).
 
-The pre-analysis identified two operationalizations:
+Validation evidence
+-------------------
 
-  A (fitness term): add counterfactual loss to fitness during search.
-     Predicted to fail per the cross-experiment pattern (scoring-layer
-     interventions don't materially affect Class C). NOT IMPLEMENTED.
+Heat equation benchmark (`benchmarks/results/heat_equation_counterfactual_mvp_c5.md`):
+- 2/2 mechanism candidates correctly identified when present
+- 0/3 false positives when no mechanism candidate exists
+- Counterfactual ratio score cleanly separates mechanism (median ≤ 1.5)
+  from non-mechanism (median > 1.7)
+- 1/5 seeds: counterfactual ranking produced a Pareto-strict improvement
+  over train-loss selection (lower cx at same accuracy)
 
-  B (post-hoc ranking): score Pareto-front candidates by their
-     counterfactual generalization AFTER search completes. At the
-     selection layer (not yet falsified). THIS MODULE IMPLEMENTS B.
+Feynman cross-benchmark (`benchmarks/results/feynman_counterfactual_validation.md`):
+- CF ranking and train-loss selection AGREED in 24/24 (target, seed) pairs.
+- Feynman has no natural-overfit failure mode for CF to discriminate against.
+- Conditional verdict: CF helps when the benchmark has Class B candidates
+  in the Pareto front; CF is neutral otherwise.
 
-The C5 selection-layer conjecture
----------------------------------
-
-Counterfactual evaluation as a post-hoc selector can reliably identify
-mechanism-capturing trees (Class C) from a Pareto front containing
-mixed-quality candidates (Class A diff-style, Class B natural-overfit,
-Class C clean mechanism). Even if it doesn't help DISCOVER Class C,
-it helps RANK candidates for deployment.
-
-Graduation criterion
---------------------
-On baseline Pareto fronts (e.g., from C1/C4 experiments), the
-counterfactual ranking correctly identifies the Class C candidate
-(when present) AND ranks Class B last (when present).
-
-Removal criterion
------------------
-Counterfactual ranking gives no information beyond cx + train_loss
-that's already on the Pareto front.
-
-Initial commit: 2026-05-26
-Last evaluation: never
-
-What this module provides
+Deployment recommendation
 -------------------------
 
-    generate_heat_eq_counterfactuals(U_base, alpha_base, ...) -> list[(U, dt_U, name)]
-        Produces a set of counterfactual perturbations of a heat-eq
-        trajectory: different IC, different α, reflected geometry,
-        added noise, etc.
+Ship as explicit-opt-in selection tool, NOT as default. Use case:
+when the user has reason to suspect natural-overfit candidates in the
+Pareto front (i.e., the benchmark/data class is known to admit them).
 
-    score_counterfactual(tree, counterfactuals) -> dict
-        Evaluates a tree on each counterfactual; returns MSE per
-        counterfactual plus a summary score.
+The C5 architectural insight
+----------------------------
 
-    rank_front_by_counterfactual(front, counterfactuals) -> list of
-        (cand, cf_score) tuples sorted by cf_score (best first).
+The cross-experiment pattern in `tessera.experimental` is striking:
+- C1 ABC scoring (scoring-layer): falsified
+- C3 MDL scoring (scoring-layer): falsified
+- C4 causal axes (search-layer): partial
+- C6 adaptive search (search-layer): null
+- **C5 counterfactual eval (SELECTION-LAYER): VALIDATED**
 
-Design notes
-------------
+The selection layer is where post-hoc evidence about a candidate's
+generalization profile lives. Scoring/search-layer interventions try
+to BIAS the GP toward better candidates during the run; selection-
+layer interventions evaluate ALREADY-DISCOVERED candidates by criteria
+the GP couldn't see. The latter pattern won where the former didn't.
 
-The counterfactual SET should expose the failure modes we care about:
+This module's design generalizes: any post-hoc per-candidate
+evaluation that can produce a scalar score per candidate fits this
+framework. The heat-equation counterfactual generator is one
+instantiation; future domain-specific generators (weather, CAMELS,
+tokamak) would follow the same `Counterfactual` interface.
 
-- *Different IC* — exposes Class B (reduce_* gives different scalars
-   per trajectory) — already tested via TRAIN/TEST split
-- *Different α* — interventional change; mechanism-correct models
-   should refit α cleanly; tautological/natural-overfit models fail
-- *Reflected X* — geometric symmetry; Laplacian respects it, diff_t
-   doesn't necessarily
-- *Added noise* — regularity perturbation; smooth fits should be
-   robust; brittle fits shouldn't
+API
+---
 
-For each counterfactual, MSE relative to the oracle gives a "how
-much does this tree degrade under this perturbation?" metric.
-Aggregate these into a single score.
+Two layers:
 
-Scoring choice: MEAN ratio of (tree MSE / oracle MSE) across
-counterfactuals. Lower is better. Oracle MSE is recomputed per CF
-because oracle changes with α.
+    Generic (domain-independent):
+        score_counterfactual(tree, counterfactuals) -> dict
+            Evaluate a tree on each counterfactual; return MSE +
+            ratio-vs-oracle per CF + aggregate (mean/median/max).
+        rank_front_by_counterfactual(front, counterfactuals, score_key)
+            Rank Pareto-front candidates by a chosen score key
+            (default 'median_ratio'). Lowest is best.
+
+    Heat-equation instance:
+        HeatEqCounterfactual
+            Dataclass: (name, U, dt_U, alpha, oracle_mse).
+        generate_heat_eq_counterfactuals(T, X, alpha_base, noise_std_base)
+            Produces 5 CFs: 2 IC perturbations, 1 doubled-α
+            interventional, 1 10× noise perturbation, 1 geometric
+            (smaller X). Each CF carries its own oracle_mse for
+            ratio computation.
+
+Adding a domain
+---------------
+
+For a new domain (e.g., weather PDE, CAMELS streamflow), implement a
+factory function returning a list of dataclass instances that match
+the duck-typed interface used by `score_counterfactual` — i.e., each
+CF must have at least `name`, the data to evaluate the tree on (in
+whatever form `eval_tree` expects), and `oracle_mse > 0` for the
+ratio. The generic ranking will then work on the resulting
+counterfactual list.
+
+For now, only the heat-equation instance ships. The generic API is
+the contract; new instances are domain-by-domain follow-ups.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Optional
 
 import numpy as np
 
@@ -96,7 +102,7 @@ from tessera.expression.tree import evaluate as eval_tree
 
 
 # ---------------------------------------------------------------------
-# Counterfactual generator for heat equation
+# Heat-equation counterfactual instance
 # ---------------------------------------------------------------------
 
 @dataclass
@@ -220,7 +226,7 @@ def generate_heat_eq_counterfactuals(
 
 
 # ---------------------------------------------------------------------
-# Scoring
+# Generic scoring + ranking
 # ---------------------------------------------------------------------
 
 def _evaluate_tree_on(tree, U, dt_U) -> float:

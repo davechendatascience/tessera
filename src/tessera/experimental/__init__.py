@@ -62,7 +62,7 @@ Inventory (current)
 | causal_axes.py | C4 (process_discovery_sr.md §6.4) | **PARTIAL VALIDATION** on heat eq — eliminates Class A-temporal but doesn't boost Class C | 2026-05-26 |
 | mdl_scoring.py | C3 (process_discovery_sr.md §6.3) | **FALSIFIED** — calibration math right, effect below empirical noise; ad-hoc effectively equivalent | 2026-05-26 |
 | adaptive_search.py | C6 (process_discovery_sr.md §6.6) | **VALIDATED-AS-PREDICTED** — adaptive ≈ baseline; pre-analysis predicted no effect; experiment confirmed exactly | 2026-05-26 |
-| counterfactual_eval.py | C5 (process_discovery_sr.md §6.5) | **VALIDATED (selection-layer)** — CF ranking reliably picks mechanism-capturing candidates from Pareto front (2/2 when present); FIRST validated-positive basket conjecture | 2026-05-26 |
+| ~~counterfactual_eval.py~~ | ~~C5~~ | **GRADUATED 2026-05-29** → `tessera.search.counterfactual_eval`. Validated on heat eq + Feynman cross-bench. First basket conjecture to graduate. | 2026-05-29 |
 | coordinate_discovery.py | C7 (c7_coordinate_discovery.md) | **NEUTRAL on Feynman** — empirically equivalent to decompose v2 (+10 exact, 0 regressions; SAME 10 transitions). Architectural generalization correct; no empirical value on this benchmark because transforms {identity, sqrt_abs, square, inverse} are linearly equivalent in log-log space, and log_abs duplicates exp_wrapper. Stay experimental pending real-data evaluation. | 2026-05-29 |
 
 Reports:
@@ -70,7 +70,8 @@ Reports:
 - `benchmarks/results/heat_equation_causal_axes_mvp_c4.md`
 - `benchmarks/results/heat_equation_mdl_mvp_c3.md`
 - `benchmarks/results/heat_equation_adaptive_mvp_c6.md`
-- `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`
+- `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`  [C5 — graduated 2026-05-29]
+- `benchmarks/results/feynman_counterfactual_validation.md`     [C5 — graduated 2026-05-29]
 - `benchmarks/results/feynman_coord_discovery_ab.md`
 
 To add a module: copy this checklist into the new module's docstring:

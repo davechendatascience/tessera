@@ -1,4 +1,8 @@
-"""Tests for tessera.experimental.counterfactual_eval — Conjecture C5."""
+"""Tests for tessera.search.counterfactual_eval.
+
+Originally tests/experimental/test_counterfactual_eval.py — moved here
+when the module graduated from experimental to production on 2026-05-29.
+"""
 from __future__ import annotations
 
 import math
@@ -14,7 +18,7 @@ from tessera.expression.tree import (
     Var, Const, BinOp, FunctionalOp2D,
 )
 
-from tessera.experimental.counterfactual_eval import (
+from tessera.search.counterfactual_eval import (
     HeatEqCounterfactual,
     generate_heat_eq_counterfactuals,
     score_counterfactual,

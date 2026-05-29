@@ -44,6 +44,12 @@ from .const_snap import snap_constants, SNAP_CANDIDATES, SnapResult
 from .decompose import (
     detect_power_law, build_power_law_tree, power_law_seed, PowerLawFit,
 )
+from .counterfactual_eval import (
+    HeatEqCounterfactual,
+    generate_heat_eq_counterfactuals,
+    score_counterfactual,
+    rank_front_by_counterfactual,
+)
 from .hall_of_fame import HallOfFame
 from .bounds import mse_lower_bound, pareto_threshold
 from .sufficient_stats import PolynomialMoments, monomial_basis
@@ -61,6 +67,8 @@ __all__ = [
     "snap_constants", "SNAP_CANDIDATES", "SnapResult",
     "detect_power_law", "build_power_law_tree", "power_law_seed",
     "PowerLawFit",
+    "HeatEqCounterfactual", "generate_heat_eq_counterfactuals",
+    "score_counterfactual", "rank_front_by_counterfactual",
     "HallOfFame",
     "mse_lower_bound", "pareto_threshold",
     "PolynomialMoments", "monomial_basis",

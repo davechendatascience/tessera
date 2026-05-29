@@ -274,6 +274,68 @@ resolution dataset doesn't admit meaningful lagged-P improvement.
 Western basins show TEST<TRAIN ratios (0.69-0.94) reflecting climate
 non-stationarity rather than GP overfit.
 
+### Changed (2026-05-29 → C5 counterfactual_eval GRADUATED to production)
+
+User direction: "do you think the experimental submodule has anything
+that can promoted to the standard modules?" Yes — C5 is the only
+validated-positive module in the basket and had been sitting at that
+status for 3 days.
+
+Per the lifecycle discipline in `tessera/experimental/__init__.py`:
+> When a module graduates, the move is a commit that updates the
+> research note (marking the conjecture validated), moves the code
+> to its production home, and removes the experimental version.
+
+MOVED `src/tessera/experimental/counterfactual_eval.py` →
+`src/tessera/search/counterfactual_eval.py`. Updated module docstring:
+removed experimental framing + graduation/removal criteria; added
+"SHIPPED 2026-05-29" status with full validation evidence summary.
+
+PUBLIC API re-exported from `tessera.search.__init__`:
+- `HeatEqCounterfactual` — dataclass
+- `generate_heat_eq_counterfactuals(T, X, alpha_base, noise_std_base)`
+- `score_counterfactual(tree, counterfactuals) -> dict`
+- `rank_front_by_counterfactual(front, counterfactuals, score_key)`
+
+MOVED `tests/experimental/test_counterfactual_eval.py` →
+`tests/search/test_counterfactual_eval.py`. All 11 tests pass on
+production location. Note in docstring of move provenance.
+
+UPDATED `benchmarks/run_heat_equation_counterfactual_mvp_c5.py`
+import path (experimental → search).
+
+UPDATED `tessera/experimental/__init__.py` inventory table: C5 row
+struck through with "GRADUATED 2026-05-29 → tessera.search.counterfactual_eval".
+
+UPDATED `docs/shipped/c5_counterfactual_eval_analysis.md` with
+graduation note at the top, pointing to new production location.
+
+UPDATED `docs/research/process_discovery_sr.md` line 374 area: added
+graduation marker as a new blockquote above the original validation
+blockquote. Historical record preserved.
+
+VERIFIED `test_no_production_code_imports_experimental` still passes
+(C5 is no longer in experimental, so search/counterfactual_eval.py
+importing within production is fine).
+
+THE C5 ARCHITECTURAL INSIGHT — preserved in the production docstring
+
+The cross-experiment pattern in tessera.experimental is striking:
+- C1 ABC scoring (scoring-layer): falsified
+- C3 MDL scoring (scoring-layer): falsified
+- C4 causal axes (search-layer): partial
+- C6 adaptive search (search-layer): null
+- C5 counterfactual eval (SELECTION-LAYER): VALIDATED — only positive
+
+The selection layer is where post-hoc evidence about a candidate's
+generalization profile lives. Scoring/search-layer interventions try
+to BIAS the GP toward better candidates during the run; selection-
+layer interventions evaluate ALREADY-DISCOVERED candidates by criteria
+the GP couldn't see. The latter pattern won where the former didn't.
+
+First basket conjecture to complete the experimental→production
+lifecycle.
+
 ### Added (2026-05-29 → C7 coordinate-discovery prepass — experimental, empirically neutral on Feynman)
 
 User direction (2026-05-29): asked whether topological system
