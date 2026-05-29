@@ -218,14 +218,22 @@ def get_interpreter(max_nodes: int):
 
     def interp(ops, arg1, arg2, consts, varidx, root, var_values):
         elem = var_values.shape[1:]
-        slots = jnp.zeros((max_nodes,) + elem, dtype=var_values.dtype)
-        for t in range(max_nodes):          # unrolled; t is static
+        slots0 = jnp.zeros((max_nodes,) + elem, dtype=var_values.dtype)
+        steps = jnp.arange(max_nodes)
+
+        def body(slots, t):
+            # lax.scan compiles this body ONCE (not unrolled), so the
+            # compiled graph is O(1 node) instead of O(max_nodes · n_ops).
+            # That keeps XLA compile cheap regardless of max_nodes.
             x1 = slots[arg1[t]]             # dynamic gather (operand < t)
             x2 = slots[arg2[t]]
             v = var_values[varidx[t]]       # dynamic gather over n_vars
             c = jnp.broadcast_to(consts[t].astype(var_values.dtype), elem)
             res = lax.switch(ops[t], branches, x1, x2, v, c)
             slots = slots.at[t].set(res)
+            return slots, None
+
+        slots, _ = lax.scan(body, slots0, steps)
         return slots[root]
 
     jitted = jax.jit(interp)
