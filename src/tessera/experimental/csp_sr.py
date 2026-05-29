@@ -72,6 +72,21 @@ class CSPSRConfig:
     # (OMP/beam) is blind to. Requires the library to be small (F < N).
     poly_degree: Optional[int] = None
     stlsq_threshold: float = 0.05
+    # Canonical constant leaves (e.g. [1.0, 0.5, 2.0]). The const-free
+    # enumeration cannot place a constant INSIDE a nonlinearity (the `1`
+    # in sqrt(1−v²/c²), the `½` in exp(−x²/2)) — those are neither
+    # variables nor out-front linear coefficients. Adding a few canonical
+    # constants as LEAVES fixes the common cases with no optimization
+    # (they evaluate to fixed columns, still a linear fit).
+    const_leaves: List[float] = field(default_factory=list)
+    # Nonlinear-constant refine (for ARBITRARY embedded constants that
+    # canonical leaves can't cover, e.g. sin(2.3·x)). Bounded fallback:
+    # enumerate small templates with ONE free-constant placeholder and fit
+    # it by least-squares. Reintroduces per-template nonlinear optimization,
+    # so it's gated (runs only when the linear fit is not already exact).
+    nonlinear_const: bool = False
+    nl_max_size: int = 3
+    nl_max_templates: int = 1200
 
 
 @dataclass
@@ -125,6 +140,8 @@ def _gen_trees(size, feature_names, cfg, memo):
     if size == 0:
         for name in feature_names:
             add(Var(name))
+        for c in cfg.const_leaves:         # canonical embedded constants
+            add(Const(float(c)))
         memo[size] = out
         return out
     for op in cfg.unary:
@@ -305,6 +322,83 @@ def _stlsq(Phi, y, threshold, max_iter=12):
 
 
 # --------------------------------------------------------------------
+# Nonlinear-constant refine (bounded fallback for embedded constants)
+# --------------------------------------------------------------------
+
+_FREE_CONST = "__c__"
+
+
+def _uses_free(t):
+    if isinstance(t, Var):
+        return t.name == _FREE_CONST
+    if isinstance(t, Const):
+        return False
+    if isinstance(t, UnOp):
+        return _uses_free(t.a)
+    return _uses_free(t.a) or _uses_free(t.b)
+
+
+def _eval_raw(t, envf, theta, N):
+    if isinstance(t, Var):
+        return np.full(N, theta) if t.name == _FREE_CONST else envf[t.name]
+    if isinstance(t, Const):
+        return np.full(N, float(t.value))
+    if isinstance(t, UnOp):
+        return np.asarray(UN_OP_FNS[t.op](_eval_raw(t.a, envf, theta, N)), float)
+    return np.asarray(BIN_OP_FNS[t.op](_eval_raw(t.a, envf, theta, N),
+                                       _eval_raw(t.b, envf, theta, N)), float)
+
+
+def _subst_free(t, theta):
+    if isinstance(t, Var):
+        return Const(float(theta)) if t.name == _FREE_CONST else t
+    if isinstance(t, Const):
+        return t
+    if isinstance(t, UnOp):
+        return UnOp(t.op, _subst_free(t.a, theta))
+    return BinOp(t.op, _subst_free(t.a, theta), _subst_free(t.b, theta))
+
+
+def _nonlinear_refine(env, y, cfg, log=lambda s: None):
+    """Fit a free embedded constant in a small template by least squares.
+    Returns (rel, tree_with_free_const, (theta, a, b)) for the best
+    template found, or (inf, None, None)."""
+    from scipy.optimize import least_squares
+    feature_names = list(env.keys())
+    N = len(y)
+    envf = {k: np.asarray(env[k], dtype=np.float64) for k in feature_names}
+    names = feature_names + [_FREE_CONST]
+    memo, templates = {}, []
+    for size in range(1, cfg.nl_max_size + 1):
+        for t in _gen_trees(size, names, cfg, memo):
+            if _uses_free(t):
+                templates.append(t)
+        if len(templates) >= cfg.nl_max_templates:
+            templates = templates[:cfg.nl_max_templates]
+            break
+    log(f"nonlinear refine: {len(templates)} free-const templates")
+    ss = float(np.sum((y - y.mean()) ** 2)) + 1e-30
+    best = (float("inf"), None, None)
+    for t in templates:
+        def resid(p):
+            theta, a, b = p
+            v = _eval_raw(t, envf, theta, N)
+            v = np.nan_to_num(v, nan=0.0, posinf=1e6, neginf=-1e6)
+            return a * v + b - y
+        for theta0 in (0.5, 1.0, 2.0):
+            try:
+                r = least_squares(resid, [theta0, 1.0, 0.0], max_nfev=50)
+            except Exception:
+                continue
+            rel = float(np.sum(r.fun ** 2) / ss)
+            if rel < best[0]:
+                best = (rel, t, tuple(r.x))
+        if best[0] < 1e-10:
+            break
+    return best
+
+
+# --------------------------------------------------------------------
 # Assemble the fitted tessera Expr
 # --------------------------------------------------------------------
 
@@ -385,6 +479,21 @@ def discover(env: Dict[str, np.ndarray], y: np.ndarray,
             cfg.beam_width, cfg.topk)
     sel_feats = [feats[k] for k in selected]
     expr = _build_expr(intercept, coef, sel_feats)
+
+    # Nonlinear-constant refine (gated fallback): only if the linear fit
+    # is not already exact, and only when enabled. Recovers ARBITRARY
+    # embedded constants the const-free dictionary cannot reach.
+    if cfg.nonlinear_const and (1.0 - r2) > 1e-8:
+        rel_nl, t_nl, params = _nonlinear_refine(env, y, cfg, log)
+        if t_nl is not None and rel_nl < (1.0 - r2):
+            theta, a, b = params
+            sub = _subst_free(t_nl, theta)
+            expr_nl = _build_expr(b, [a], [sub])
+            return CSPSRResult(
+                expr=expr_nl, r2=float(1.0 - rel_nl), complexity=complexity(expr_nl),
+                n_terms=1, n_features=Phi.shape[1],
+                terms=[(float(a), _key(sub))], intercept=float(b))
+
     return CSPSRResult(
         expr=expr, r2=float(r2), complexity=complexity(expr),
         n_terms=len(selected), n_features=Phi.shape[1],
