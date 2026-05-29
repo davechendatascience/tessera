@@ -343,7 +343,257 @@ def evo_search(X, y, cfg: Optional[EvoConfig] = None,
                     info={"n_nodes": n, "m_consts": m})
 
 
+# --------------------------------------------------------------------
+# Method A+: relaxation + Gumbel-softmax straight-through + entropy L0
+# --------------------------------------------------------------------
+
+@dataclass
+class RelaxConfig:
+    n_nodes: int = 6
+    m_consts: int = 1
+    op_names: List[str] = field(default_factory=lambda: list(DEFAULT_OPS))
+    n_steps: int = 3000
+    lr: float = 0.02
+    tau0: float = 2.0
+    tau1: float = 0.1
+    lam_max: float = 1e-2
+    sparsity_warmup_frac: float = 0.4
+    use_gumbel: bool = False     # deterministic straight-through by default
+    n_restarts: int = 16         # A+ is single-run-ish, not a 256-ticket lottery
+    seed: int = 0
+
+
+def _st(logits, tau, key, use_gumbel=False):
+    """Straight-through selection: hard one-hot in the forward pass (so
+    the program is DISCRETE — closes the discretization gap), soft
+    gradient in the backward pass. Gumbel noise optional (off by default;
+    it was too disruptive on small programs)."""
+    import jax
+    import jax.numpy as jnp
+    z = logits + jax.random.gumbel(key, logits.shape) if use_gumbel else logits
+    y = jax.nn.softmax(z / tau)
+    y_hard = jax.nn.one_hot(jnp.argmax(y), logits.shape[0])
+    return jax.lax.stop_gradient(y_hard - y) + y
+
+
+def relax_search(X, y, cfg: Optional[RelaxConfig] = None,
+                 recover_thresh: float = 0.9999) -> SRResult:
+    """Differentiable relaxation with Gumbel-STE + annealed entropy
+    sparsity. The forward pass evaluates SAMPLED DISCRETE programs (STE),
+    so the optimizer sees real picks rather than a smeared blend."""
+    import jax
+    import jax.numpy as jnp
+    from jax import lax
+
+    cfg = cfg or RelaxConfig()
+    d = X.shape[1]; m = cfg.m_consts; n = cfg.n_nodes
+    K = len(cfg.op_names)
+    P = d + m + n - 1
+    branches, _ = make_ops(cfg.op_names)
+    core = make_core_eval(d, m, n, branches)
+    Xj = jnp.asarray(X, jnp.float32); yj = jnp.asarray(y, jnp.float32)
+    tmap = jax.tree_util.tree_map
+
+    def init(key):
+        k1, k2, k3, k4 = jax.random.split(key, 4)
+        return {
+            "alpha": 0.01 * jax.random.normal(k1, (n, K)),
+            "bl": 0.01 * jax.random.normal(k2, (n, P)),
+            "br": 0.01 * jax.random.normal(k3, (n, P)),
+            "consts": jax.random.normal(k4, (m,)),
+        }
+
+    def forward(params, tau, key):
+        slots = [Xj[:, j] for j in range(d)] + \
+                [jnp.full((Xj.shape[0],), params["consts"][j]) for j in range(m)]
+        keys = jax.random.split(key, n * 3)
+        for i in range(n):
+            navail = d + m + i
+            prev = jnp.stack(slots, axis=0)
+            ug = cfg.use_gumbel
+            wl = _st(params["bl"][i, :navail], tau, keys[3 * i], ug)
+            wr = _st(params["br"][i, :navail], tau, keys[3 * i + 1], ug)
+            xl = jnp.einsum("p,pn->n", wl, prev)
+            xr = jnp.einsum("p,pn->n", wr, prev)
+            opvals = jnp.stack([f(xl, xr) for f in branches], axis=0)
+            wo = _st(params["alpha"][i], tau, keys[3 * i + 2], ug)
+            node = jnp.einsum("k,kn->n", wo, opvals)
+            node = jnp.clip(jnp.nan_to_num(node, nan=0.0, posinf=1e6, neginf=-1e6),
+                            -1e6, 1e6)
+            slots.append(node)
+        return slots[-1]
+
+    def entropy(params, tau):
+        tot = 0.0
+        for i in range(n):
+            navail = d + m + i
+            for lg in (params["alpha"][i], params["bl"][i, :navail],
+                       params["br"][i, :navail]):
+                p = jax.nn.softmax(lg / tau)
+                tot = tot + -jnp.sum(p * jnp.log(p + 1e-12))
+        return tot
+
+    def loss_fn(params, tau, lam, key):
+        pred = forward(params, tau, key)
+        return jnp.mean((pred - yj) ** 2) + lam * entropy(params, tau)
+
+    frac = jnp.arange(cfg.n_steps) / max(cfg.n_steps - 1, 1)
+    taus = cfg.tau1 + 0.5 * (cfg.tau0 - cfg.tau1) * (1 + jnp.cos(jnp.pi * frac))
+    warm = cfg.sparsity_warmup_frac
+    lams = jnp.where(frac < warm, 0.0,
+                     cfg.lam_max * (frac - warm) / max(1.0 - warm, 1e-6))
+
+    def train(key):
+        params = init(key)
+        m0 = tmap(jnp.zeros_like, params); v0 = tmap(jnp.zeros_like, params)
+        step_keys = jax.random.split(jax.random.fold_in(key, 99), cfg.n_steps)
+
+        def step(carry, inp):
+            params, mm, vv = carry
+            t, tau, lam, k = inp
+            l, g = jax.value_and_grad(loss_fn)(params, tau, lam, k)
+            mm = tmap(lambda a, b: 0.9 * a + 0.1 * b, mm, g)
+            vv = tmap(lambda a, b: 0.999 * a + 0.001 * b * b, vv, g)
+            bc1 = 1 - 0.9 ** (t + 1); bc2 = 1 - 0.999 ** (t + 1)
+            params = tmap(lambda p, a, b: p - cfg.lr * (a / bc1) / (jnp.sqrt(b / bc2) + 1e-8),
+                          params, mm, vv)
+            return (params, mm, vv), l
+
+        (params, _, _), _ = lax.scan(step, (params, m0, v0),
+                                     (jnp.arange(cfg.n_steps), taus, lams, step_keys))
+        return params
+
+    keys = jax.random.split(jax.random.PRNGKey(cfg.seed), cfg.n_restarts)
+    trained = jax.jit(jax.vmap(train))(keys)
+
+    # discretize each restart -> hard program -> score
+    best = None
+    for r in range(cfg.n_restarts):
+        pr = {k: np.asarray(v[r]) for k, v in trained.items()}
+        ops = np.array([int(np.argmax(pr["alpha"][i])) for i in range(n)])
+        left = np.array([int(np.argmax(pr["bl"][i, :d + m + i])) for i in range(n)])
+        right = np.array([int(np.argmax(pr["br"][i, :d + m + i])) for i in range(n)])
+        consts = pr["consts"]
+        pred = np.asarray(core(jnp.asarray(ops), jnp.asarray(left),
+                               jnp.asarray(right), jnp.asarray(consts), Xj))
+        mse = float(np.mean((pred - y) ** 2))
+        r2 = r2_of(mse, y)
+        if best is None or r2 > best[0]:
+            best = (r2, ops, left, right, consts)
+
+    r2b, bo, bl_, br_, bc = best
+    expr = render(bo, bl_, br_, bc, cfg.op_names, d, m)
+    return SRResult(method="A+:gumbel-ste", expr=expr, r2=r2b,
+                    recovered=r2b > recover_thresh,
+                    evals=cfg.n_restarts * cfg.n_steps,
+                    info={"n_restarts": cfg.n_restarts})
+
+
+# --------------------------------------------------------------------
+# Method B: learned policy over discrete programs (CEM-style)
+# --------------------------------------------------------------------
+# A distribution over programs (per-node categoricals) that LEARNS from
+# reward: each iteration samples programs, refines their constants, and
+# concentrates probability mass on the elite structures. The logits are
+# cross-attempt memory — the search gets smarter, unlike independent
+# restarts. (Simplified DSR: a learned distribution + risk-seeking elite
+# update; no autoregressive controller. The "learned search" property is
+# the point of comparison.)
+
+@dataclass
+class PolicyConfig:
+    n_nodes: int = 6
+    m_consts: int = 2
+    op_names: List[str] = field(default_factory=lambda: list(DEFAULT_OPS))
+    pop: int = 80
+    iters: int = 25
+    inner_steps: int = 120
+    lr: float = 0.05
+    elite_frac: float = 0.2
+    smooth: float = 0.5         # CEM logit blend toward elite frequencies
+    seed: int = 0
+
+
+def _softmax_np(z):
+    z = z - z.max()
+    e = np.exp(z)
+    return e / e.sum()
+
+
+def _sample_programs(op_logits, left_logits, right_logits, pop, d, m, n, rng):
+    K = op_logits.shape[1]
+    ops = np.zeros((pop, n), dtype=np.int64)
+    left = np.zeros((pop, n), dtype=np.int64)
+    right = np.zeros((pop, n), dtype=np.int64)
+    for i in range(n):
+        navail = d + m + i
+        ops[:, i] = rng.choice(K, size=pop, p=_softmax_np(op_logits[i]))
+        left[:, i] = rng.choice(navail, size=pop, p=_softmax_np(left_logits[i, :navail]))
+        right[:, i] = rng.choice(navail, size=pop, p=_softmax_np(right_logits[i, :navail]))
+    return ops, left, right
+
+
+def policy_search(X, y, cfg: Optional[PolicyConfig] = None,
+                  recover_thresh: float = 0.9999) -> SRResult:
+    """Learned-distribution (CEM) search over discrete programs with
+    per-sample gradient const-refinement."""
+    import jax
+    import jax.numpy as jnp
+
+    cfg = cfg or PolicyConfig()
+    d = X.shape[1]; m = cfg.m_consts; n = cfg.n_nodes
+    K = len(cfg.op_names)
+    P = d + m + n - 1
+    branches, _ = make_ops(cfg.op_names)
+    core = make_core_eval(d, m, n, branches)
+    refine = make_refiner(core, cfg.inner_steps, cfg.lr)
+    vrefine = jax.jit(jax.vmap(refine, in_axes=(0, 0, 0, 0, None, None)))
+    Xj = jnp.asarray(X, jnp.float32); yj = jnp.asarray(y, jnp.float32)
+    rng = np.random.default_rng(cfg.seed)
+
+    op_logits = np.zeros((n, K)); left_logits = np.zeros((n, P)); right_logits = np.zeros((n, P))
+    s = cfg.smooth
+    n_elite = max(2, int(cfg.elite_frac * cfg.pop))
+    best = None
+    evals = 0
+    for it in range(cfg.iters):
+        ops, left, right = _sample_programs(op_logits, left_logits, right_logits,
+                                            cfg.pop, d, m, n, rng)
+        consts0 = rng.normal(size=(cfg.pop, m)).astype(np.float32)
+        c_ref, mse = vrefine(jnp.asarray(ops), jnp.asarray(left), jnp.asarray(right),
+                             jnp.asarray(consts0), Xj, yj)
+        c_ref = np.asarray(c_ref); mse = np.asarray(mse)
+        evals += cfg.pop
+        r2 = np.nan_to_num(np.array([r2_of(float(mse[i]), y) for i in range(cfg.pop)]),
+                           nan=-1e9, posinf=-1e9, neginf=-1e9)
+
+        gi = int(np.argmax(r2))
+        if best is None or r2[gi] > best[0]:
+            best = (float(r2[gi]), ops[gi].copy(), left[gi].copy(),
+                    right[gi].copy(), c_ref[gi].copy())
+        if best[0] > recover_thresh:
+            break
+
+        elite = np.argsort(-r2)[:n_elite]
+        for i in range(n):
+            navail = d + m + i
+            fo = np.bincount(ops[elite, i], minlength=K) / n_elite
+            op_logits[i] = (1 - s) * op_logits[i] + s * np.log(fo + 1e-6)
+            fl = np.bincount(left[elite, i], minlength=navail) / n_elite
+            left_logits[i, :navail] = (1 - s) * left_logits[i, :navail] + s * np.log(fl + 1e-6)
+            fr = np.bincount(right[elite, i], minlength=navail) / n_elite
+            right_logits[i, :navail] = (1 - s) * right_logits[i, :navail] + s * np.log(fr + 1e-6)
+
+    r2b, bo, bl_, br_, bc = best
+    expr = render(bo, bl_, br_, bc, cfg.op_names, d, m)
+    return SRResult(method="B:learned-policy", expr=expr, r2=r2b,
+                    recovered=r2b > recover_thresh, evals=evals,
+                    info={"iters": cfg.iters, "pop": cfg.pop})
+
+
 __all__ = [
     "make_ops", "make_core_eval", "make_refiner", "render", "r2_of",
-    "SRResult", "target_suite", "EvoConfig", "evo_search", "DEFAULT_OPS",
+    "SRResult", "target_suite", "EvoConfig", "evo_search",
+    "RelaxConfig", "relax_search", "PolicyConfig", "policy_search",
+    "DEFAULT_OPS",
 ]

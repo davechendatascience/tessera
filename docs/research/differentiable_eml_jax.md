@@ -145,6 +145,57 @@ sees. Pure restart/annealing do not.
 `run_diff_eml_jax.py` is kept only as the landscape-blindness diagnostic,
 not as a method. Restarts will NOT be the engine.
 
+### Method D: structure search as a CSP (Knuth TAOCP 4F7, §7.2.2.3)
+
+The sequential bottleneck is the discrete STRUCTURE search (the search
+loop — GPU-immune; GPU only parallelizes the const-refinement across the
+population). Knuth's *Constraint Satisfaction* fascicle is the efficient-
+algorithm source for it, because **the structure search IS a CSP**:
+
+- **Variables**: per node i, `(op_i, left_i, right_i)`.
+- **Domains**: `op_i ∈ operators`; `left_i, right_i ∈` valid earlier slots.
+- **Constraints**: wiring validity; arity (unary ⇒ canonical right);
+  **connectivity** (the root must transitively depend on the inputs —
+  forbids the constant-collapse nogood we watched A+ fall into,
+  `sqrt(1.16)`); **symmetry-breaking** (commutative ops ⇒ `left ≤ right`;
+  no `neg(neg ·)`; no dead nodes; canonical associative chains —
+  eliminates the redundant equivalents GP/CEM re-sample endlessly);
+  optional dimensional/type consistency; complexity bound.
+
+Knuth's toolkit for solving it efficiently — **backtracking with
+constraint propagation, dancing-cells (reversible sparse-set state for
+O(1) backtrack steps), and dynamic variable-ordering heuristics**. Why
+this is the right call, grounded in the fascicle:
+
+- **Smart backtracking beats general/blind search on STRUCTURED
+  problems.** Knuth's 3-coloring benchmark: plain backtracking
+  (7.2.2.1X) beat the best SAT solver by ~600× because the problem is
+  structured; and the *encoding* changed runtime by orders of magnitude.
+  SR structure is highly constrained ⇒ the same lesson applies.
+- **Completeness on bounded complexity** — backtracking will find the
+  form if it exists within the node budget; GP/CEM/relaxation give no
+  such guarantee. This is the home for the *conditional* scalability
+  guarantee discussed earlier: Knuth's **tractable families / dichotomy
+  theorem** rigorously characterize which CSPs are poly-time.
+- **Unification**: the fascicle explicitly frames the **Ising model as a
+  CSP** (statistical mechanics, p.4). So the E1 energy work and this
+  structure search are the *same* formal object — CSP ⊇ {Ising, SAT,
+  XCC, structure search}.
+
+**Architecture (Method D):** a CSP backtracking *structure enumerator*
+(symmetry-breaking + connectivity + dynamic ordering + dancing-cells,
+host-side, sequential, smart) streams DISTINCT valid skeletons in an
+intelligent order → the GPU `vrefine` batch-refines their constants in
+parallel. Sequential search becomes systematic + pruned + complete
+instead of blind; GPU does the parallel numerical work.
+
+**Honest limit**: backtracking is still worst-case exponential in program
+size. The win is pruning + symmetry-breaking (large constant factors) +
+completeness on bounded structure + the right encoding — exactly where
+Knuth shows it beats blind/general methods. It does not repeal the
+exponential; it makes the *structured, low-complexity* regime fast and
+guaranteed, which is the regime tessera's detectors certify.
+
 ## Status
 
 - Status: **substrate built, restart-only optimization rejected**;
