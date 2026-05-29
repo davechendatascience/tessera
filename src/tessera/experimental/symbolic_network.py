@@ -199,9 +199,10 @@ def _compile_feature_tree_jax(tree: Node, K: int):
 def evaluate_network_jax_batch(
     network: "SymbolicNetwork", images: np.ndarray,
 ) -> Optional[np.ndarray]:
-    """JAX batched evaluation. Returns scores of shape (N,) as numpy
-    array, or None if any tree in the network has FunctionalOp / 2D
-    (caller should fall back to numpy)."""
+    """JAX batched evaluation. Returns scores of shape (N, n_classes)
+    as numpy array, or None if any tree in the network has FunctionalOp
+    / 2D (caller should fall back to numpy).
+    """
     if not _jax_available():
         return None
     from tessera.expression.batched import extract_constants
@@ -221,13 +222,17 @@ def evaluate_network_jax_batch(
         feature_cols.append(feats)
     features_matrix = jnp.stack(feature_cols, axis=1)  # shape (N, K)
 
-    l2_fn = _compile_feature_tree_jax(network.layer_2_tree, network.K)
-    if l2_fn is None:
-        return None
-    l2_consts_list = extract_constants(network.layer_2_tree)
-    l2_consts = (jnp.asarray(l2_consts_list, dtype=images_j.dtype)
-                 if l2_consts_list else jnp.zeros(0, dtype=images_j.dtype))
-    scores = l2_fn(features_matrix, l2_consts)  # shape (N,)
+    score_cols = []
+    for tree in network.layer_2_trees:
+        l2_fn = _compile_feature_tree_jax(tree, network.K)
+        if l2_fn is None:
+            return None
+        l2_consts_list = extract_constants(tree)
+        l2_consts = (jnp.asarray(l2_consts_list, dtype=images_j.dtype)
+                     if l2_consts_list else jnp.zeros(0, dtype=images_j.dtype))
+        sc = l2_fn(features_matrix, l2_consts)  # shape (N,)
+        score_cols.append(sc)
+    scores = jnp.stack(score_cols, axis=1)  # shape (N, n_classes)
 
     return np.asarray(scores)
 
@@ -244,46 +249,55 @@ def clear_jax_tree_cache() -> None:
 
 @dataclass(frozen=True)
 class SymbolicNetwork:
-    """K-feature 2-layer symbolic network for binary classification.
+    """K-feature 2-layer symbolic network for N-class classification.
 
     Layer 1: K trees, each takes the image (named "image") and produces
     a value. The mean of the output array (or the value itself if
     already scalar) is taken as the feature.
 
-    Layer 2: 1 tree that takes K named scalar features "f0", "f1", ...,
-    "f{K-1}" and produces a scalar score. Sigmoid(score) → probability;
-    threshold at 0.5 → predicted class.
+    Layer 2: N trees (one per class). Each takes the K named scalar
+    features "f0", "f1", ..., "f{K-1}" and produces a scalar score.
+
+    Prediction: softmax(scores) for class probabilities; argmax(scores)
+    for the predicted class. Binary is the N=2 special case.
     """
     layer_1_trees: tuple[Node, ...]
-    layer_2_tree: Node
+    layer_2_trees: tuple[Node, ...]   # one per class; len = n_classes
 
     @property
     def K(self) -> int:
         return len(self.layer_1_trees)
 
     @property
+    def n_classes(self) -> int:
+        return len(self.layer_2_trees)
+
+    @property
     def complexity(self) -> int:
-        """Total complexity = Σ tree complexities."""
+        """Total complexity = Σ tree complexities (all K+N trees)."""
         return (sum(tree_complexity(t) for t in self.layer_1_trees)
-                + tree_complexity(self.layer_2_tree))
+                + sum(tree_complexity(t) for t in self.layer_2_trees))
 
     def __str__(self) -> str:
         l1 = "\n    ".join(f"f{i} = {t}" for i, t in enumerate(self.layer_1_trees))
-        return (f"SymbolicNetwork(K={self.K}, cx={self.complexity}):\n"
+        l2 = "\n    ".join(f"class_{c} = {t}" for c, t in enumerate(self.layer_2_trees))
+        return (f"SymbolicNetwork(K={self.K}, n_classes={self.n_classes}, "
+                f"cx={self.complexity}):\n"
                 f"  Layer 1:\n    {l1}\n"
-                f"  Layer 2: score = {self.layer_2_tree}")
+                f"  Layer 2 (one tree per class):\n    {l2}")
 
 
 # ---------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------
 
-def evaluate_network(network: SymbolicNetwork, image: np.ndarray) -> float:
-    """Score one image. Returns sigmoid pre-activation (signed score).
+def evaluate_network(network: SymbolicNetwork, image: np.ndarray) -> np.ndarray:
+    """Score one image; returns array of shape (n_classes,).
 
-    Layer-1 trees that produce array outputs are mean-pooled to scalar.
-    Failures in evaluation produce 0 (silent — these candidates lose to
-    selection).
+    Layer-1 trees mean-pool to scalar features. Each layer-2 tree
+    consumes the K features and emits one class score. Failures in
+    individual evaluations contribute 0 to that slot (silent — candidates
+    with broken trees lose to selection).
     """
     features = []
     for tree in network.layer_1_trees:
@@ -302,25 +316,27 @@ def evaluate_network(network: SymbolicNetwork, image: np.ndarray) -> float:
 
     feature_env = {f"f{i}": np.array([f], dtype=np.float64)
                    for i, f in enumerate(features)}
-    try:
-        score = evaluate(network.layer_2_tree, feature_env, fill_warmup=0.0)
-        score = np.asarray(score, dtype=np.float64).ravel()[0]
-        if not math.isfinite(score):
-            return 0.0
-        return float(score)
-    except Exception:
-        return 0.0
+    scores = np.zeros(network.n_classes, dtype=np.float64)
+    for c, tree in enumerate(network.layer_2_trees):
+        try:
+            s = evaluate(tree, feature_env, fill_warmup=0.0)
+            s = np.asarray(s, dtype=np.float64).ravel()[0]
+            if math.isfinite(s):
+                scores[c] = float(s)
+        except Exception:
+            scores[c] = 0.0
+    return scores
 
 
 def evaluate_network_batch(
     network: SymbolicNetwork, images: np.ndarray,
 ) -> np.ndarray:
-    """Evaluate on N images (shape (N, H, W)). Returns N scalar scores."""
+    """Evaluate on N images. Returns shape (N, n_classes)."""
     n = images.shape[0]
-    scores = np.zeros(n, dtype=np.float64)
+    out = np.zeros((n, network.n_classes), dtype=np.float64)
     for i in range(n):
-        scores[i] = evaluate_network(network, images[i])
-    return scores
+        out[i] = evaluate_network(network, images[i])
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -340,6 +356,7 @@ def _tree_uses_reduce(node: Node) -> bool:
 def random_network(
     rng: random.Random,
     K: int = 4,
+    n_classes: int = 2,
     layer_1_max_depth: int = 3,
     layer_2_max_depth: int = 3,
     enable_2d: bool = True,
@@ -400,39 +417,56 @@ def random_network(
             pass
         l1_trees.append(chosen)
 
-    # Layer 2
+    # Layer 2 — one tree per class
     l2_features = [f"f{i}" for i in range(K)]
     l2_feature_set = set(l2_features)
-    l2_tree: Optional[Node] = None
+    l2_trees: list[Node] = []
 
-    # Default: seed with sum of all features as a known-good starting
-    # point. The GP will refine via slot-mutation.
-    if seed_layer_2_sum:
-        l2_tree = Var("f0")
-        for i in range(1, K):
-            l2_tree = BinOp("add", l2_tree, Var(f"f{i}"))
-    else:
-        for _ in range(max_attempts_per_slot):
-            try:
-                t = random_tree(rng, l2_features, max_depth=layer_2_max_depth,
-                                enable_2d=False, pointwise_only=True)
-            except Exception:
-                continue
-            if validate_tree(t, l2_feature_set) is None:
-                l2_tree = t
-                break
-        if l2_tree is None:
-            l2_tree = Var("f0")
-            for i in range(1, K):
-                l2_tree = BinOp("add", l2_tree, Var(f"f{i}"))
-    try:
-        l2_tree = simplify(l2_tree)
-    except Exception:
-        pass
+    # Build sum-of-features tree (used as the binary positive-class seed).
+    sum_features: Node = Var("f0")
+    for i in range(1, K):
+        sum_features = BinOp("add", sum_features, Var(f"f{i}"))
+
+    for c in range(n_classes):
+        l2_tree: Optional[Node] = None
+        # Default seed picks based on n_classes:
+        # - Binary (n_classes=2): class 0 = sum of features, class 1 = 0.
+        #   argmax(sum, 0) = 0 if sum > 0, else 1 — equivalent to the
+        #   classic threshold-at-0 of a single-tree binary network. This
+        #   preserves the strong binary performance.
+        # - Multi-class (n_classes >= 3): each class anchored on a single
+        #   feature f_{c % K}. Distinct trees that don't collapse under
+        #   simplify_ac. The GP refines these into class-discriminating
+        #   functions.
+        if seed_layer_2_sum:
+            if n_classes == 2:
+                l2_tree = sum_features if c == 0 else Const(0.0)
+            else:
+                anchor = c % K
+                l2_tree = Var(f"f{anchor}")
+        else:
+            for _ in range(max_attempts_per_slot):
+                try:
+                    t = random_tree(rng, l2_features, max_depth=layer_2_max_depth,
+                                    enable_2d=False, pointwise_only=True)
+                except Exception:
+                    continue
+                if validate_tree(t, l2_feature_set) is None:
+                    l2_tree = t
+                    break
+            if l2_tree is None:
+                l2_tree = Var("f0")
+                for i in range(1, K):
+                    l2_tree = BinOp("add", l2_tree, Var(f"f{i}"))
+        try:
+            l2_tree = simplify(l2_tree)
+        except Exception:
+            pass
+        l2_trees.append(l2_tree)
 
     return SymbolicNetwork(
         layer_1_trees=tuple(l1_trees),
-        layer_2_tree=l2_tree,
+        layer_2_trees=tuple(l2_trees),
     )
 
 
@@ -445,23 +479,20 @@ def mutate_network(
     rng: random.Random,
     enable_2d: bool = True,
 ) -> SymbolicNetwork:
-    """Pick one slot (K+1 choices); mutate that tree.
+    """Pick one slot (K + n_classes choices); mutate that tree.
 
     Returns a new SymbolicNetwork. Original unchanged.
-    If mutation fails to produce a valid tree, returns the input.
     """
-    n_slots = network.K + 1
+    n_slots = network.K + network.n_classes
     slot = rng.randrange(n_slots)
 
     if slot < network.K:
         parent = network.layer_1_trees[slot]
-        # Try up to 5 mutations to find one that doesn't introduce a
-        # reduce_* op (would kill image dependence).
         for _ in range(5):
             try:
                 new_tree = tree_mutate(
                     [parent], rng, ["image"],
-                    pointwise_only=True,   # no 1D FunctionalOp
+                    pointwise_only=True,
                     enable_2d=enable_2d,
                 )
             except Exception:
@@ -470,8 +501,6 @@ def mutate_network(
                 return network
             if not _tree_uses_reduce(new_tree):
                 break
-        # Simplify (constant folds, x/x→1, x*0→0, etc.) to suppress
-        # degenerate trees produced by random mutation.
         try:
             new_tree = simplify(new_tree)
         except Exception:
@@ -480,10 +509,12 @@ def mutate_network(
         new_l1[slot] = new_tree
         return SymbolicNetwork(
             layer_1_trees=tuple(new_l1),
-            layer_2_tree=network.layer_2_tree,
+            layer_2_trees=network.layer_2_trees,
         )
 
-    parent = network.layer_2_tree
+    # Layer-2 slot: 0..n_classes-1
+    class_idx = slot - network.K
+    parent = network.layer_2_trees[class_idx]
     feature_names = [f"f{i}" for i in range(network.K)]
     try:
         new_tree = tree_mutate(
@@ -498,30 +529,38 @@ def mutate_network(
         new_tree = simplify(new_tree)
     except Exception:
         pass
+    new_l2 = list(network.layer_2_trees)
+    new_l2[class_idx] = new_tree
     return SymbolicNetwork(
         layer_1_trees=network.layer_1_trees,
-        layer_2_tree=new_tree,
+        layer_2_trees=tuple(new_l2),
     )
 
 
 def crossover_networks(
     a: SymbolicNetwork, b: SymbolicNetwork, rng: random.Random,
 ) -> SymbolicNetwork:
-    """Swap one slot from b into a. Networks must have the same K."""
-    if a.K != b.K:
-        raise ValueError(f"crossover: K mismatch ({a.K} vs {b.K})")
-    n_slots = a.K + 1
+    """Swap one slot from b into a. Networks must agree on (K, n_classes)."""
+    if a.K != b.K or a.n_classes != b.n_classes:
+        raise ValueError(
+            f"crossover: shape mismatch ({a.K}/{a.n_classes} vs "
+            f"{b.K}/{b.n_classes})"
+        )
+    n_slots = a.K + a.n_classes
     slot = rng.randrange(n_slots)
     if slot < a.K:
         new_l1 = list(a.layer_1_trees)
         new_l1[slot] = b.layer_1_trees[slot]
         return SymbolicNetwork(
             layer_1_trees=tuple(new_l1),
-            layer_2_tree=a.layer_2_tree,
+            layer_2_trees=a.layer_2_trees,
         )
+    class_idx = slot - a.K
+    new_l2 = list(a.layer_2_trees)
+    new_l2[class_idx] = b.layer_2_trees[class_idx]
     return SymbolicNetwork(
         layer_1_trees=a.layer_1_trees,
-        layer_2_tree=b.layer_2_tree,
+        layer_2_trees=tuple(new_l2),
     )
 
 
@@ -529,15 +568,18 @@ def crossover_networks(
 # Fitness
 # ---------------------------------------------------------------------
 
-def _sigmoid(x: np.ndarray) -> np.ndarray:
-    """Numerically-stable sigmoid."""
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -30.0, 30.0)))
+def _log_softmax(scores: np.ndarray) -> np.ndarray:
+    """Numerically-stable log-softmax over axis=-1."""
+    max_s = np.max(scores, axis=-1, keepdims=True)
+    shifted = scores - max_s
+    log_sum_exp = np.log(np.sum(np.exp(shifted), axis=-1, keepdims=True))
+    return shifted - log_sum_exp
 
 
 def _scores(network: SymbolicNetwork, images: np.ndarray,
             *, use_jax: bool = False) -> np.ndarray:
-    """Compute scores via JAX if enabled and tree is JAX-compatible;
-    fall back to numpy per-image otherwise."""
+    """Compute per-class scores; shape (N, n_classes).
+    Tries JAX if enabled and tree-compatible; falls back to numpy."""
     if use_jax:
         scores = evaluate_network_jax_batch(network, images)
         if scores is not None:
@@ -550,19 +592,22 @@ def network_loss(
     images: np.ndarray, labels: np.ndarray,
     *, parsimony: float = 0.001, use_jax: bool = False,
 ) -> float:
-    """MSE(sigmoid(scores), labels) + parsimony · total_complexity.
+    """Cross-entropy loss (mean over samples) + parsimony · total_complexity.
 
-    Returns +inf on non-finite predictions (forces selection to drop
-    catastrophically-broken networks). Optionally uses JAX-batched
-    evaluation when `use_jax=True` and the network is JAX-compatible
-    (auto-falls-back to numpy otherwise).
+    For each sample i with true class y_i:
+        loss_i = -log_softmax(scores[i])[y_i]
+
+    Returns +inf on non-finite scores (selection drops broken candidates).
+    Binary case (n_classes=2) is just the special case of softmax over 2 logits.
     """
     scores = _scores(network, images, use_jax=use_jax)
     if not np.isfinite(scores).all():
         return float("inf")
-    probs = _sigmoid(scores)
-    mse = float(np.mean((probs - labels.astype(np.float64)) ** 2))
-    return mse + parsimony * network.complexity
+    log_probs = _log_softmax(scores)
+    n = scores.shape[0]
+    true_log_probs = log_probs[np.arange(n), labels.astype(int)]
+    ce = float(-np.mean(true_log_probs))
+    return ce + parsimony * network.complexity
 
 
 def network_accuracy(
@@ -570,10 +615,10 @@ def network_accuracy(
     images: np.ndarray, labels: np.ndarray,
     *, use_jax: bool = False,
 ) -> float:
-    """Threshold pre-sigmoid scores at 0; compare to labels."""
+    """argmax(scores) vs labels."""
     scores = _scores(network, images, use_jax=use_jax)
-    preds = (scores > 0).astype(int)
-    return float(np.mean(preds == labels))
+    preds = scores.argmax(axis=-1)
+    return float(np.mean(preds == labels.astype(int)))
 
 
 # ---------------------------------------------------------------------
@@ -592,6 +637,7 @@ class NetworkGPConfig:
     pop_size: int = 30
     n_gens: int = 30
     K: int = 4
+    n_classes: int = 2    # binary by default; set to N for N-class
     layer_1_max_depth: int = 3
     layer_2_max_depth: int = 3
     enable_2d: bool = True
@@ -603,12 +649,6 @@ class NetworkGPConfig:
     early_stop_patience: int = 12
     verbose: bool = True
     # JAX batched evaluation (see Milestone A.5 section at module top).
-    # When True AND tree is JAX-compatible (no FunctionalOp / 2D), the
-    # GP scoring loop uses vmapped JIT'd evaluation. On Colab GPU this
-    # delivers the GPU acceleration that Milestone A advertised. On CPU
-    # it's a modest 2-5× speedup. Falls back to numpy per-tree on
-    # unsupported tree structures. Default False — opt-in flag matching
-    # the production GP's use_jax_population_eval pattern.
     use_jax_eval: bool = False
 
 
@@ -635,7 +675,7 @@ def run_network_gp(
     pop: list[NetworkCandidate] = []
     while len(pop) < cfg.pop_size:
         net = random_network(
-            rng, K=cfg.K,
+            rng, K=cfg.K, n_classes=cfg.n_classes,
             layer_1_max_depth=cfg.layer_1_max_depth,
             layer_2_max_depth=cfg.layer_2_max_depth,
             enable_2d=cfg.enable_2d,

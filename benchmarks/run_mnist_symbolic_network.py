@@ -82,18 +82,43 @@ def main(argv=None) -> int:
     p.add_argument("--jax", action="store_true",
                    help="Enable JAX-batched evaluation (vmap over images, "
                         "JIT'd per tree). Required for Colab GPU.")
+    p.add_argument("--multiclass", action="store_true",
+                   help="Train a 10-class network directly (all digits 0-9) "
+                        "instead of the binary --target_a vs --target_b task.")
     args = p.parse_args(argv)
 
-    imgs_tr, labels_tr, imgs_te, labels_te = load_mnist_pair(
-        target_a=args.target_a, target_b=args.target_b,
-        n_per_train=args.n_per_train, n_per_test=args.n_per_test,
-        seed=args.seed,
-    )
+    if args.multiclass:
+        # Load full 0-9 dataset
+        from sklearn.datasets import fetch_openml
+        print(f"[data] loading MNIST 0-9 (direct {args.K}-feature 10-class network)...")
+        mnist = fetch_openml("mnist_784", version=1, as_frame=False, cache=True)
+        X = mnist.data.reshape(-1, 28, 28).astype(np.float32) / 255.0
+        y_full = mnist.target.astype(int)
+        rng = np.random.default_rng(args.seed)
+        tr_list, lab_tr_list, te_list, lab_te_list = [], [], [], []
+        for d in range(10):
+            idx = rng.permutation(np.where(y_full == d)[0])
+            tr_list.extend(X[idx[:args.n_per_train]])
+            lab_tr_list.extend([d] * args.n_per_train)
+            te_list.extend(X[idx[args.n_per_train:args.n_per_train+args.n_per_test]])
+            lab_te_list.extend([d] * args.n_per_test)
+        imgs_tr = np.stack([downsample_2x(im) for im in tr_list], axis=0)
+        imgs_te = np.stack([downsample_2x(im) for im in te_list], axis=0)
+        labels_tr = np.array(lab_tr_list)
+        labels_te = np.array(lab_te_list)
+        n_classes = 10
+    else:
+        imgs_tr, labels_tr, imgs_te, labels_te = load_mnist_pair(
+            target_a=args.target_a, target_b=args.target_b,
+            n_per_train=args.n_per_train, n_per_test=args.n_per_test,
+            seed=args.seed,
+        )
+        n_classes = 2
     print(f"\n[data] TRAIN: {imgs_tr.shape}, labels = {np.bincount(labels_tr)}")
     print(f"[data] TEST:  {imgs_te.shape}, labels = {np.bincount(labels_te)}")
 
     cfg = NetworkGPConfig(
-        pop_size=args.pop, n_gens=args.gens, K=args.K,
+        pop_size=args.pop, n_gens=args.gens, K=args.K, n_classes=n_classes,
         layer_1_max_depth=3, layer_2_max_depth=3,
         enable_2d=not args.no_2d,
         parsimony=args.parsimony,
@@ -130,7 +155,7 @@ def main(argv=None) -> int:
     elif te_acc > 0.80:
         print("  >>> PROGRESS (above single-tree baseline; below 0.95 target)")
     else:
-        print("  >>> NOT YET (≤ single-tree baseline)")
+        print("  >>> NOT YET (<= single-tree baseline)")
 
     # Write report
     OUT_DIR.mkdir(parents=True, exist_ok=True)
