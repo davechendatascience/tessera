@@ -384,15 +384,21 @@ def term_delete(
     return replace_at(tree, idx, replacement)
 
 
-_OP_SWAP_GROUPS: list[set[str]] = [
-    {"add", "sub"},
-    {"mul", "div", "pow"},
-    {"min", "max"},
-    {"tanh", "sign"},
-    {"abs", "neg"},
-    {"sqrt", "log", "exp"},
-    {"sin", "cos"},
-    {"acos", "asin"},
+_OP_SWAP_GROUPS: list[tuple[str, ...]] = [
+    ("add", "sub"),
+    ("div", "mul", "pow"),
+    ("max", "min"),
+    ("sign", "tanh"),
+    ("abs", "neg"),
+    ("exp", "log", "sqrt"),
+    ("cos", "sin"),
+    ("acos", "asin"),
+    # Stored as sorted tuples (not sets) so iteration order is
+    # deterministic across processes. Set iteration order depends on
+    # PYTHONHASHSEED, which would leak into rng.choice() picks downstream
+    # and make GP runs non-reproducible across separate Python invocations.
+    # See `benchmarks/results/feynman_decompose_ab.md` post-mortem.
+    #
     # atan2 stands alone — no obvious binary swap partner; pow / div /
     # mul have different output domains.
 ]
