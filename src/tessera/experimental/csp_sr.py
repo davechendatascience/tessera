@@ -87,6 +87,14 @@ class CSPSRConfig:
     nonlinear_const: bool = False
     nl_max_size: int = 3
     nl_max_templates: int = 1200
+    # GPU compatibility: evaluate the feature dictionary on jax.numpy
+    # (device) and transfer Φ to host once for the fit. This is the EAGER
+    # path — one XLA dispatch per feature-subexpression — so on CPU it is
+    # SLOWER than numpy (dispatch overhead, no GPU payoff). It helps only
+    # on an actual GPU with large N (big array ops amortize dispatch). The
+    # genuinely fast path is jit-fusion via the opcode-tape interpreter
+    # (compile once, run all features as data) — deferred (task: GPU path).
+    use_jax: bool = False
 
 
 @dataclass
@@ -175,26 +183,91 @@ def _gen_trees(size, feature_names, cfg, memo):
 # Column evaluation with shared-subexpression cache (tessera op fns)
 # --------------------------------------------------------------------
 
-def _make_evaluator(env: Dict[str, np.ndarray]):
-    col_cache: Dict[str, np.ndarray] = {}
+def _make_evaluator(env, xp=np):
+    """Shared-subexpression evaluator. `xp` is the array module (numpy on
+    CPU, jax.numpy on GPU). tessera's BIN_OP_FNS/UN_OP_FNS are backend-
+    polymorphic (array_module), so they run on whatever array type `env`
+    holds — feed jnp arrays and the whole feature DAG executes on GPU."""
+    col_cache: Dict[str, object] = {}
+    ref = next(iter(env.values()))
 
-    def ev(n: Node) -> np.ndarray:
+    def ev(n: Node):
         k = _key(n)
         c = col_cache.get(k)
         if c is not None:
             return c
         if isinstance(n, Var):
-            v = np.asarray(env[n.name], dtype=np.float64)
+            v = env[n.name]
         elif isinstance(n, Const):
-            v = np.full_like(next(iter(env.values())), float(n.value), dtype=np.float64)
+            v = xp.full_like(ref, float(n.value))
         elif isinstance(n, UnOp):
-            v = np.asarray(UN_OP_FNS[n.op](ev(n.a)), dtype=np.float64)
+            v = UN_OP_FNS[n.op](ev(n.a))
         else:
-            v = np.asarray(BIN_OP_FNS[n.op](ev(n.a), ev(n.b)), dtype=np.float64)
+            v = BIN_OP_FNS[n.op](ev(n.a), ev(n.b))
         col_cache[k] = v
         return v
 
     return ev
+
+
+def _build_dictionary(env, y, candidate_trees, cfg, log):
+    """Evaluate candidate trees into a design matrix Φ (host numpy).
+
+    CPU path (numpy): per-column filter + numerical dedup + cap.
+    GPU path (use_jax): evaluate the whole feature DAG on-device with
+    jax.numpy (tessera ops auto-dispatch), stack Φ on the GPU, do the
+    finite/variance filter batched on-device, and transfer Φ to host ONCE
+    for the (cheap) linear fit. The expensive part — F features × N
+    samples — runs on the GPU; only one bulk transfer crosses."""
+    N = len(y)
+    feats, sizes = [], []
+    if not cfg.use_jax:
+        ev = _make_evaluator(env, np)
+        cols, seen = [], set()
+        for t in candidate_trees:
+            try:
+                col = np.asarray(ev(t), dtype=np.float64)
+            except Exception:
+                continue
+            if col.shape != (N,) or not np.all(np.isfinite(col)) \
+                    or float(np.std(col)) < 1e-9:
+                continue
+            h = hash(np.round(col, 6).tobytes())
+            if h in seen:
+                continue
+            seen.add(h)
+            feats.append(t); cols.append(col); sizes.append(_size(t))
+            if len(feats) >= cfg.max_features:
+                log(f"feature cap {cfg.max_features} hit")
+                break
+        if not feats:
+            return [], None, []
+        return feats, np.stack(cols, axis=1), sizes
+
+    # ---- GPU path ----
+    import jax.numpy as jnp
+    envx = {k: jnp.asarray(np.asarray(v), dtype=jnp.float32) for k, v in env.items()}
+    ev = _make_evaluator(envx, jnp)
+    cols = []
+    for t in candidate_trees:
+        try:
+            col = ev(t)
+        except Exception:
+            continue
+        feats.append(t); cols.append(col)
+        if len(feats) >= cfg.max_features:
+            log(f"feature cap {cfg.max_features} hit")
+            break
+    if not feats:
+        return [], None, []
+    Phi_dev = jnp.stack(cols, axis=1)                      # (N, F) on GPU
+    finite = jnp.all(jnp.isfinite(Phi_dev), axis=0)
+    keep = np.asarray(finite & (jnp.std(Phi_dev, axis=0) > 1e-9))   # (F,) to host
+    Phi = np.asarray(Phi_dev, dtype=np.float64)[:, keep]   # one bulk transfer
+    feats = [f for f, k in zip(feats, keep) if k]
+    sizes = [_size(f) for f in feats]
+    log(f"GPU dictionary: {Phi.shape[1]} features (numerical dedup skipped)")
+    return feats, Phi, sizes
 
 
 # --------------------------------------------------------------------
@@ -430,7 +503,6 @@ def discover(env: Dict[str, np.ndarray], y: np.ndarray,
     cfg = cfg or CSPSRConfig()
     y = np.asarray(y, dtype=np.float64)
     feature_names = list(env.keys())
-    ev = _make_evaluator(env)
 
     # ---- candidate feature trees: monomial library or free enumeration ----
     if cfg.poly_degree is not None:
@@ -440,29 +512,12 @@ def discover(env: Dict[str, np.ndarray], y: np.ndarray,
         candidate_trees = [t for size in range(cfg.max_size + 1)
                            for t in _gen_trees(size, feature_names, cfg, memo)]
 
-    # ---- build the dictionary (evaluate, dedup, filter) ----
-    feats, cols, sizes, seen = [], [], [], set()
-    for t in candidate_trees:
-        try:
-            col = ev(t)
-        except Exception:
-            continue
-        if col.shape != y.shape or not np.all(np.isfinite(col)) \
-                or float(np.std(col)) < 1e-9:
-            continue
-        h = hash(np.round(col, 6).tobytes())
-        if h in seen:
-            continue
-        seen.add(h)
-        feats.append(t); cols.append(col); sizes.append(_size(t))
-        if len(feats) >= cfg.max_features:
-            log(f"feature cap {cfg.max_features} hit")
-            break
+    # ---- build the dictionary (CPU numpy, or GPU jax + one Φ transfer) ----
+    feats, Phi, sizes = _build_dictionary(env, y, candidate_trees, cfg, log)
     if not feats:
         return CSPSRResult(expr=Const(float(y.mean())), r2=0.0,
                            complexity=1, n_terms=0, n_features=0,
                            intercept=float(y.mean()))
-    Phi = np.stack(cols, axis=1)
     log(f"dictionary: {Phi.shape[1]} features")
 
     # ---- fit ----
