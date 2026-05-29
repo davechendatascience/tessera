@@ -531,10 +531,13 @@ def _build_expr(intercept, coefs, feats) -> Node:
         terms.append(f if abs(c - 1.0) < 1e-9 else BinOp("mul", Const(float(c)), f))
     if abs(intercept) > 1e-9 or not terms:
         terms.append(Const(float(intercept)))
-    expr = terms[0]
-    for t in terms[1:]:
-        expr = BinOp("add", expr, t)
-    return expr
+    # Balanced add-tree (depth ~log2 N), NOT a left-leaning chain: with many
+    # selected terms (e.g. degree-2 dictionaries) a chain of depth N blows
+    # Python's recursion limit in evaluate()/complexity()/etc.
+    while len(terms) > 1:
+        terms = [BinOp("add", terms[i], terms[i + 1]) if i + 1 < len(terms)
+                 else terms[i] for i in range(0, len(terms), 2)]
+    return terms[0]
 
 
 # --------------------------------------------------------------------
@@ -569,10 +572,20 @@ def discover(env: Dict[str, np.ndarray], y: np.ndarray,
     log(f"dictionary: {Phi.shape[1]} features")
 
     # ---- fit ----
-    if cfg.poly_degree is not None:                  # SINDy: joint fit + threshold
+    if cfg.poly_degree is not None and Phi.shape[1] < len(y):
+        # STLSQ (joint fit + threshold) is well-posed only when F < N.
         coefs_all, intercept, r2 = _stlsq(Phi, y, cfg.stlsq_threshold)
         selected = [i for i in range(len(feats)) if abs(coefs_all[i]) > 1e-9]
         coef = [coefs_all[i] for i in selected]
+    elif cfg.poly_degree is not None:
+        # Library has F >= N (e.g. degree-2 over many features): STLSQ is
+        # ill-posed (it spreads weight and selects far too many terms,
+        # which also blows recursion). Use beam (forward, bounded max_terms).
+        log(f"poly library F={Phi.shape[1]} >= N={len(y)}; "
+            f"STLSQ ill-posed -> beam (bounded {cfg.max_terms} terms)")
+        selected, coef, intercept, r2 = _beam_search(
+            Phi, y, sizes, cfg.max_terms, cfg.recover_thresh, cfg.parsimony,
+            cfg.beam_width, cfg.topk)
     elif cfg.beam_width <= 1:                         # greedy OMP
         selected, coef, intercept, r2 = _omp(
             Phi, y, sizes, cfg.max_terms, cfg.recover_thresh, cfg.parsimony)
