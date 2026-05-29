@@ -59,10 +59,19 @@ class CSPSRConfig:
     unary: List[str] = field(default_factory=lambda: list(DEFAULT_UNARY))
     binary: List[str] = field(default_factory=lambda: list(DEFAULT_BINARY))
     max_size: int = 4            # max feature-tree size (operator nodes)
-    max_terms: int = 4           # OMP terms (sparsity of the linear fit)
+    max_terms: int = 4           # max terms in the sparse linear fit
     max_features: int = 60000    # cap on the enumerated dictionary (logged)
-    parsimony: float = 1e-4      # tie-break toward smaller features in OMP
+    parsimony: float = 1e-4      # tie-break toward smaller features
+    beam_width: int = 10         # beam search width (1 = greedy OMP)
+    topk: int = 24               # candidates expanded per beam entry per step
     recover_thresh: float = 0.9999
+    # Sparse-polynomial (SINDy) mode: if set, use a degree-bounded MONOMIAL
+    # library + STLSQ (joint least-squares + iterative thresholding) instead
+    # of free-form enumeration + forward selection. STLSQ recovers jointly-
+    # predictive-but-marginally-uncorrelated terms that forward selection
+    # (OMP/beam) is blind to. Requires the library to be small (F < N).
+    poly_degree: Optional[int] = None
+    stlsq_threshold: float = 0.05
 
 
 @dataclass
@@ -165,6 +174,60 @@ def _make_evaluator(env: Dict[str, np.ndarray]):
 # Orthogonal matching pursuit (closed-form, gradient-free)
 # --------------------------------------------------------------------
 
+def _beam_search(Phi, y, sizes, max_terms, recover_thresh, parsimony,
+                 beam_width, topk):
+    """Beam search over feature SUBSETS — the less-myopic selector.
+
+    Greedy OMP commits to its first feature and can't backtrack; if the
+    true terms aren't individually the most-correlated (they usually
+    aren't for multi-term targets), greedy never assembles them. Beam
+    search keeps the top-`beam_width` partial subsets so a true term
+    survives even when it isn't the single best next pick, and the subsets
+    are ranked with a parsimony tie-break (fewer terms, then smaller
+    features) — a lightweight Pareto preference among equal-accuracy fits.
+    """
+    N, F = Phi.shape
+    ones = np.ones((N, 1))
+    ybar = float(y.mean())
+    ss_tot = float(np.sum((y - ybar) ** 2)) + 1e-30
+    Phic = Phi - Phi.mean(axis=0, keepdims=True)
+    norms = np.linalg.norm(Phic, axis=0) + 1e-12
+    sizes = np.asarray(sizes, dtype=np.float64)
+
+    # beam entry: (selected_tuple, coef, intercept, residual, r2)
+    beam = [((), np.zeros(0), ybar, y - ybar, 0.0)]
+    best = beam[0]
+    for _ in range(max_terms):
+        scored, seen = [], set()
+        for sel, _c, _b, r, _r2 in beam:
+            rn = np.linalg.norm(r) + 1e-12
+            score = np.abs(Phic.T @ r) / (norms * rn) - parsimony * sizes
+            for k in sel:
+                score[k] = -1e9
+            for k in np.argsort(-score)[:topk]:
+                trial = tuple(sorted(sel + (int(k),)))
+                if trial in seen:
+                    continue
+                seen.add(trial)
+                A = np.hstack([ones, Phi[:, list(trial)]])
+                c, *_ = np.linalg.lstsq(A, y, rcond=None)
+                r_new = y - A @ c
+                r2 = 1.0 - float(np.sum(r_new ** 2)) / ss_tot
+                scored.append((r2, trial, c, r_new))
+        if not scored:
+            break
+        scored.sort(key=lambda s: (-s[0], len(s[1]),
+                                   float(sizes[list(s[1])].sum())))
+        beam = [(tr, c[1:], float(c[0]), rnew, r2)
+                for (r2, tr, c, rnew) in scored[:beam_width]]
+        if beam[0][4] > best[4]:
+            best = beam[0]
+        if best[4] > recover_thresh:
+            break
+    sel, coef, intercept, _r, r2 = best
+    return list(sel), coef, intercept, r2
+
+
 def _omp(Phi, y, sizes, max_terms, recover_thresh, parsimony):
     N, F = Phi.shape
     ones = np.ones((N, 1))
@@ -192,6 +255,43 @@ def _omp(Phi, y, sizes, max_terms, recover_thresh, parsimony):
         if best_r2 > recover_thresh:
             break
     return selected, coef, intercept, best_r2
+
+
+def _monomial_features(feature_names, degree):
+    """Degree-bounded monomial library (products of variables) as tessera
+    trees — the SINDy-style dictionary for sparse polynomial dynamics."""
+    from itertools import combinations_with_replacement as cwr
+    feats = []
+    for deg in range(1, degree + 1):
+        for combo in cwr(feature_names, deg):
+            node: Node = Var(combo[0])
+            for nm in combo[1:]:
+                node = BinOp("mul", node, Var(nm))
+            feats.append(node)
+    return feats
+
+
+def _stlsq(Phi, y, threshold, max_iter=12):
+    """Sequential thresholded least squares (Brunton et al. 2016, SINDy).
+    Joint least-squares fit over ALL features, then iteratively zero
+    coefficients below `threshold` and refit on the survivors. Sees
+    jointly-predictive terms regardless of marginal correlation."""
+    N = Phi.shape[0]
+    A = np.hstack([np.ones((N, 1)), Phi])
+    ss_tot = float(np.sum((y - y.mean()) ** 2)) + 1e-30
+    c, *_ = np.linalg.lstsq(A, y, rcond=None)
+    support = np.ones(A.shape[1], dtype=bool)
+    for _ in range(max_iter):
+        small = np.abs(c) < threshold
+        small[0] = False                       # never threshold the intercept
+        new_support = ~small
+        if np.array_equal(new_support, support) or not new_support[1:].any():
+            break
+        support = new_support
+        c = np.zeros(A.shape[1])
+        c[support], *_ = np.linalg.lstsq(A[:, support], y, rcond=None)
+    r2 = 1.0 - float(np.sum((y - A @ c) ** 2)) / ss_tot
+    return c[1:], float(c[0]), r2
 
 
 # --------------------------------------------------------------------
@@ -228,38 +328,51 @@ def discover(env: Dict[str, np.ndarray], y: np.ndarray,
     feature_names = list(env.keys())
     ev = _make_evaluator(env)
 
-    memo = {}
+    # ---- candidate feature trees: monomial library or free enumeration ----
+    if cfg.poly_degree is not None:
+        candidate_trees = _monomial_features(feature_names, cfg.poly_degree)
+    else:
+        memo = {}
+        candidate_trees = [t for size in range(cfg.max_size + 1)
+                           for t in _gen_trees(size, feature_names, cfg, memo)]
+
+    # ---- build the dictionary (evaluate, dedup, filter) ----
     feats, cols, sizes, seen = [], [], [], set()
-    capped = False
-    for size in range(0, cfg.max_size + 1):
-        for t in _gen_trees(size, feature_names, cfg, memo):
-            try:
-                col = ev(t)
-            except Exception:
-                continue
-            if col.shape != y.shape or not np.all(np.isfinite(col)) \
-                    or float(np.std(col)) < 1e-9:
-                continue
-            h = hash(np.round(col, 6).tobytes())
-            if h in seen:
-                continue
-            seen.add(h)
-            feats.append(t); cols.append(col); sizes.append(_size(t))
-            if len(feats) >= cfg.max_features:
-                capped = True
-                break
-        if capped:
-            log(f"feature cap {cfg.max_features} hit at size {size}")
+    for t in candidate_trees:
+        try:
+            col = ev(t)
+        except Exception:
+            continue
+        if col.shape != y.shape or not np.all(np.isfinite(col)) \
+                or float(np.std(col)) < 1e-9:
+            continue
+        h = hash(np.round(col, 6).tobytes())
+        if h in seen:
+            continue
+        seen.add(h)
+        feats.append(t); cols.append(col); sizes.append(_size(t))
+        if len(feats) >= cfg.max_features:
+            log(f"feature cap {cfg.max_features} hit")
             break
     if not feats:
         return CSPSRResult(expr=Const(float(y.mean())), r2=0.0,
                            complexity=1, n_terms=0, n_features=0,
                            intercept=float(y.mean()))
     Phi = np.stack(cols, axis=1)
-    log(f"dictionary: {Phi.shape[1]} features (sizes 0..{cfg.max_size})")
+    log(f"dictionary: {Phi.shape[1]} features")
 
-    selected, coef, intercept, r2 = _omp(
-        Phi, y, sizes, cfg.max_terms, cfg.recover_thresh, cfg.parsimony)
+    # ---- fit ----
+    if cfg.poly_degree is not None:                  # SINDy: joint fit + threshold
+        coefs_all, intercept, r2 = _stlsq(Phi, y, cfg.stlsq_threshold)
+        selected = [i for i in range(len(feats)) if abs(coefs_all[i]) > 1e-9]
+        coef = [coefs_all[i] for i in selected]
+    elif cfg.beam_width <= 1:                         # greedy OMP
+        selected, coef, intercept, r2 = _omp(
+            Phi, y, sizes, cfg.max_terms, cfg.recover_thresh, cfg.parsimony)
+    else:                                            # beam search (forward)
+        selected, coef, intercept, r2 = _beam_search(
+            Phi, y, sizes, cfg.max_terms, cfg.recover_thresh, cfg.parsimony,
+            cfg.beam_width, cfg.topk)
     sel_feats = [feats[k] for k in selected]
     expr = _build_expr(intercept, coef, sel_feats)
     return CSPSRResult(

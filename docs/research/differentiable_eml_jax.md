@@ -231,9 +231,42 @@ enumeration stays host-side (cheap). tessera's ops are backend-
 polymorphic (`array_module`), so the port is mechanical; the win is for
 large N / large dictionaries, not the small benchmarks.
 
-NEXT: test `csp_sr` on Feynman, dynamical systems (SINDy's home turf),
-and MNIST (needs a feature layer — raw 784-pixel enumeration is
-infeasible; fit per-class scorers over reduced features).
+**Two fit modes (a sharp finding — corrected after experiment).** The
+fit step is a pluggable component; greedy forward selection (OMP/beam) is
+fragile, but it is NOT an architectural flaw in csp_sr (the enumeration
+is fine — swap the fit and it works). The precise failure on Lorenz
+`dy/dt = 28x − xz − y`, on the CLEAN 9-monomial library: greedy OMP picks
+`xz`✓ then `y`✓ (corr-with-residual, so it is NOT "blind" to the
+marginally-uncorrelated `y`), then at step 3 picks `xy` instead of `x`
+and can't recover. The culprit is **collinearity**: on the attractor the
+monomials are correlated, so after a partial fit several features explain
+the residual almost equally and greedy commits to a wrong one. This is a
+generic weakness of greedy/forward selection under correlated features,
+not specific to this target.
+
+The fix is a **joint** fit: fit all features simultaneously, then
+threshold. **STLSQ** (sequential thresholded least squares; the fit step
+of SINDy) does this and recovers the exact sparse set despite
+collinearity. STLSQ is just proper joint regression — "SINDy" is STLSQ +
+a polynomial library, a separate (and, for polynomial dynamics, optimal)
+choice. Joint lstsq wants F < N, so for sparse-polynomial dynamics
+csp_sr uses a degree-bounded MONOMIAL library + STLSQ (`poly_degree`).
+For GENERAL SR the free-form dictionary stays and the fit becomes a wide
+sparse method (LARS/Lasso, or STLSQ on a smallest-first size-capped
+dictionary) — we are NOT locked into SINDy.
+
+So csp_sr has two regimes:
+- **General SR**: free-form tree enumeration + beam (forward) selection.
+- **Sparse-polynomial (SINDy)**: monomial library + STLSQ (joint).
+
+**Dynamical systems: 6/6.** Lorenz + Rössler, all components recovered
+EXACTLY (correct coefficients, incl. the marginally-invisible `y` and
+Rössler's intercept `0.2`), instant. See
+`benchmarks/results/dynamical_csp.md`.
+
+NEXT: Feynman (general-SR mode; expect small/linear-in-param eqns
+recovered, large ones hit the enumeration limit) and MNIST (needs a
+feature layer — raw 784-pixel enumeration is infeasible).
 
 ## Status (superseded)
 
