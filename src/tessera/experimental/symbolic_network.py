@@ -120,16 +120,23 @@ def _jax_available() -> bool:
 _JAX_TREE_CACHE: dict = {}
 
 
-def _compile_image_tree_jax(tree: Node):
+def _compile_image_tree_jax(tree: Node, n_regions: int = 1):
     """Compile a layer-1 tree to a JIT'd batched function:
        fn(images_batch, consts) -> features_batch
 
     images_batch: shape (N, H, W).
     consts: 1-D array of Const values in pre-order.
-    features_batch: shape (N,) — mean-pooled per-image scalars.
+    features_batch: shape (N, n_regions) — region-pooled features per image.
+
+    For n_regions=1, this is the classic global mean-pool returning shape
+    (N, 1). For n_regions=4, returns 4 per-quadrant means → shape (N, 4).
+    Any perfect-square n_regions is supported.
 
     Returns None if the tree contains FunctionalOp / FunctionalOp2D
     (not supported by the per-tree JIT path).
+
+    Cache key includes n_regions so different pooling resolutions get
+    their own JIT.
     """
     if not is_pure_pointwise(tree):
         return None
@@ -139,7 +146,11 @@ def _compile_image_tree_jax(tree: Node):
     import jax
     import jax.numpy as jnp
 
-    key = (topology_key(tree), ("image",), "image")
+    side = int(round(math.sqrt(n_regions)))
+    if side * side != n_regions:
+        raise ValueError(f"n_regions must be a perfect square; got {n_regions}")
+
+    key = (topology_key(tree), ("image",), f"image_pool_{n_regions}")
     if key in _JAX_TREE_CACHE:
         return _JAX_TREE_CACHE[key]
 
@@ -150,9 +161,18 @@ def _compile_image_tree_jax(tree: Node):
     def _per_image(image, consts):
         out = raw_fn((image,), consts)
         out = jnp.asarray(out)
+        # Handle scalar output: broadcast to n_regions
         if out.ndim == 0:
-            return out
-        return jnp.mean(out)
+            return jnp.full((n_regions,), out)
+        # 2-D pooling: split into side × side blocks, mean each
+        if n_regions == 1:
+            return jnp.array([jnp.mean(out)])
+        H, W = out.shape
+        h_step = H // side
+        w_step = W // side
+        cropped = out[: side * h_step, : side * w_step]
+        blocked = cropped.reshape(side, h_step, side, w_step)
+        return jnp.mean(blocked, axis=(1, 3)).flatten()
 
     vmapped = jax.vmap(_per_image, in_axes=(0, None))
     jitted = jax.jit(vmapped)
@@ -212,19 +232,21 @@ def evaluate_network_jax_batch(
 
     feature_cols = []
     for tree in network.layer_1_trees:
-        fn = _compile_image_tree_jax(tree)
+        fn = _compile_image_tree_jax(tree, n_regions=network.n_regions)
         if fn is None:
             return None
         consts_list = extract_constants(tree)
         consts = (jnp.asarray(consts_list, dtype=images_j.dtype)
                   if consts_list else jnp.zeros(0, dtype=images_j.dtype))
-        feats = fn(images_j, consts)  # shape (N,)
+        feats = fn(images_j, consts)  # shape (N, n_regions)
         feature_cols.append(feats)
-    features_matrix = jnp.stack(feature_cols, axis=1)  # shape (N, K)
+    # Concat along feature axis: (N, K * n_regions)
+    features_matrix = jnp.concatenate(feature_cols, axis=1)
 
+    n_features = network.n_features
     score_cols = []
     for tree in network.layer_2_trees:
-        l2_fn = _compile_feature_tree_jax(tree, network.K)
+        l2_fn = _compile_feature_tree_jax(tree, n_features)
         if l2_fn is None:
             return None
         l2_consts_list = extract_constants(tree)
@@ -249,20 +271,34 @@ def clear_jax_tree_cache() -> None:
 
 @dataclass(frozen=True)
 class SymbolicNetwork:
-    """K-feature 2-layer symbolic network for N-class classification.
+    """K-feature 2-layer symbolic network for N-class classification with
+    spatial region pooling.
 
     Layer 1: K trees, each takes the image (named "image") and produces
-    a value. The mean of the output array (or the value itself if
-    already scalar) is taken as the feature.
+    a 2-D output. The output is pooled to `n_regions` scalar features by
+    splitting into a √n_regions × √n_regions block grid and taking the
+    mean of each block. So each layer-1 tree contributes n_regions
+    features to layer 2.
 
-    Layer 2: N trees (one per class). Each takes the K named scalar
-    features "f0", "f1", ..., "f{K-1}" and produces a scalar score.
+    Pooling choices:
+      - n_regions=1: classic global mean-pool (loses all spatial info).
+      - n_regions=4: 2×2 quadrant means (top-left/top-right/bottom-left/
+        bottom-right). Distinguishes location-sensitive patterns like
+        "7 has ink at the top" vs "1 has ink in the middle".
+      - n_regions=9: 3×3 block grid (finer spatial resolution).
+      - Any perfect-square value supported.
+
+    Layer 2: N trees (one per class). Each takes K · n_regions named
+    scalar features "f0", "f1", ..., "f{K·n_regions − 1}" and produces
+    a scalar score. Feature indexing: `f_{k * n_regions + q}` is the
+    q-th regional pool of tree k.
 
     Prediction: softmax(scores) for class probabilities; argmax(scores)
     for the predicted class. Binary is the N=2 special case.
     """
     layer_1_trees: tuple[Node, ...]
     layer_2_trees: tuple[Node, ...]   # one per class; len = n_classes
+    n_regions: int = 1                 # pooling resolution; backwards-compat default
 
     @property
     def K(self) -> int:
@@ -273,46 +309,89 @@ class SymbolicNetwork:
         return len(self.layer_2_trees)
 
     @property
+    def n_features(self) -> int:
+        """Total layer-2 input features = K · n_regions."""
+        return len(self.layer_1_trees) * self.n_regions
+
+    @property
     def complexity(self) -> int:
         """Total complexity = Σ tree complexities (all K+N trees)."""
         return (sum(tree_complexity(t) for t in self.layer_1_trees)
                 + sum(tree_complexity(t) for t in self.layer_2_trees))
 
     def __str__(self) -> str:
-        l1 = "\n    ".join(f"f{i} = {t}" for i, t in enumerate(self.layer_1_trees))
+        l1 = "\n    ".join(f"T_{i} = {t}" for i, t in enumerate(self.layer_1_trees))
         l2 = "\n    ".join(f"class_{c} = {t}" for c, t in enumerate(self.layer_2_trees))
-        return (f"SymbolicNetwork(K={self.K}, n_classes={self.n_classes}, "
-                f"cx={self.complexity}):\n"
-                f"  Layer 1:\n    {l1}\n"
-                f"  Layer 2 (one tree per class):\n    {l2}")
+        return (f"SymbolicNetwork(K={self.K}, n_regions={self.n_regions}, "
+                f"n_classes={self.n_classes}, "
+                f"n_features={self.n_features}, cx={self.complexity}):\n"
+                f"  Layer 1 (each → {self.n_regions} pooled features):\n    {l1}\n"
+                f"  Layer 2 (one tree per class, takes {self.n_features} features):\n    {l2}")
 
 
 # ---------------------------------------------------------------------
 # Evaluation
 # ---------------------------------------------------------------------
 
+def _pool_regions_np(arr: np.ndarray, n_regions: int) -> np.ndarray:
+    """Pool a 2-D array into a flat array of n_regions regional means.
+
+    n_regions must be a perfect square (1, 4, 9, ...). The image is
+    split into a √n × √n block grid; each block's mean (ignoring NaN)
+    is one output value. Result is row-major flattened.
+
+    Edge handling: if H or W isn't divisible by √n, the image is
+    cropped to the largest divisible sub-rectangle. (Tessera's
+    benchmark images are 14×14 → cleanly divisible by 1, 2, 7, 14.)
+
+    Scalar input is broadcast to n_regions identical values.
+    """
+    if n_regions == 1:
+        if arr.ndim == 0:
+            v = float(arr)
+        else:
+            v = float(np.nanmean(arr))
+        return np.array([v if math.isfinite(v) else 0.0])
+    side = int(round(math.sqrt(n_regions)))
+    if side * side != n_regions:
+        raise ValueError(f"n_regions must be a perfect square; got {n_regions}")
+    if arr.ndim == 0:
+        v = float(arr)
+        return np.full(n_regions, v if math.isfinite(v) else 0.0)
+    if arr.ndim != 2:
+        v = float(np.nanmean(arr))
+        return np.full(n_regions, v if math.isfinite(v) else 0.0)
+    H, W = arr.shape
+    h_step = H // side
+    w_step = W // side
+    if h_step == 0 or w_step == 0:
+        v = float(np.nanmean(arr))
+        return np.full(n_regions, v if math.isfinite(v) else 0.0)
+    cropped = arr[: side * h_step, : side * w_step]
+    # NaN-safe mean per block
+    blocked = cropped.reshape(side, h_step, side, w_step)
+    pooled = np.nanmean(blocked, axis=(1, 3)).flatten()
+    pooled = np.where(np.isfinite(pooled), pooled, 0.0)
+    return pooled.astype(np.float64)
+
+
 def evaluate_network(network: SymbolicNetwork, image: np.ndarray) -> np.ndarray:
     """Score one image; returns array of shape (n_classes,).
 
-    Layer-1 trees mean-pool to scalar features. Each layer-2 tree
-    consumes the K features and emits one class score. Failures in
-    individual evaluations contribute 0 to that slot (silent — candidates
-    with broken trees lose to selection).
+    Layer-1 trees are evaluated on the image, then pooled to
+    n_regions scalar features each. Layer-2 trees see K · n_regions
+    named features f0..f_{K·n_regions − 1}.
     """
-    features = []
+    features: list[float] = []
+    n_regions = network.n_regions
     for tree in network.layer_1_trees:
         try:
             out = evaluate(tree, {"image": image}, fill_warmup=0.0)
             out = np.asarray(out, dtype=np.float64)
-            if out.ndim == 0:
-                val = float(out)
-            else:
-                val = float(np.nanmean(out))
-            if not math.isfinite(val):
-                val = 0.0
-            features.append(val)
+            pooled = _pool_regions_np(out, n_regions)
         except Exception:
-            features.append(0.0)
+            pooled = np.zeros(n_regions, dtype=np.float64)
+        features.extend(float(v) for v in pooled)
 
     feature_env = {f"f{i}": np.array([f], dtype=np.float64)
                    for i, f in enumerate(features)}
@@ -357,6 +436,7 @@ def random_network(
     rng: random.Random,
     K: int = 4,
     n_classes: int = 2,
+    n_regions: int = 1,
     layer_1_max_depth: int = 3,
     layer_2_max_depth: int = 3,
     enable_2d: bool = True,
@@ -418,13 +498,14 @@ def random_network(
         l1_trees.append(chosen)
 
     # Layer 2 — one tree per class
-    l2_features = [f"f{i}" for i in range(K)]
+    n_features = K * n_regions
+    l2_features = [f"f{i}" for i in range(n_features)]
     l2_feature_set = set(l2_features)
     l2_trees: list[Node] = []
 
     # Build sum-of-features tree (used as the binary positive-class seed).
     sum_features: Node = Var("f0")
-    for i in range(1, K):
+    for i in range(1, n_features):
         sum_features = BinOp("add", sum_features, Var(f"f{i}"))
 
     for c in range(n_classes):
@@ -442,7 +523,7 @@ def random_network(
             if n_classes == 2:
                 l2_tree = sum_features if c == 0 else Const(0.0)
             else:
-                anchor = c % K
+                anchor = c % n_features
                 l2_tree = Var(f"f{anchor}")
         else:
             for _ in range(max_attempts_per_slot):
@@ -456,7 +537,7 @@ def random_network(
                     break
             if l2_tree is None:
                 l2_tree = Var("f0")
-                for i in range(1, K):
+                for i in range(1, n_features):
                     l2_tree = BinOp("add", l2_tree, Var(f"f{i}"))
         try:
             l2_tree = simplify(l2_tree)
@@ -467,6 +548,7 @@ def random_network(
     return SymbolicNetwork(
         layer_1_trees=tuple(l1_trees),
         layer_2_trees=tuple(l2_trees),
+        n_regions=n_regions,
     )
 
 
@@ -510,12 +592,13 @@ def mutate_network(
         return SymbolicNetwork(
             layer_1_trees=tuple(new_l1),
             layer_2_trees=network.layer_2_trees,
+            n_regions=network.n_regions,
         )
 
     # Layer-2 slot: 0..n_classes-1
     class_idx = slot - network.K
     parent = network.layer_2_trees[class_idx]
-    feature_names = [f"f{i}" for i in range(network.K)]
+    feature_names = [f"f{i}" for i in range(network.n_features)]
     try:
         new_tree = tree_mutate(
             [parent], rng, feature_names,
@@ -534,17 +617,19 @@ def mutate_network(
     return SymbolicNetwork(
         layer_1_trees=network.layer_1_trees,
         layer_2_trees=tuple(new_l2),
+        n_regions=network.n_regions,
     )
 
 
 def crossover_networks(
     a: SymbolicNetwork, b: SymbolicNetwork, rng: random.Random,
 ) -> SymbolicNetwork:
-    """Swap one slot from b into a. Networks must agree on (K, n_classes)."""
-    if a.K != b.K or a.n_classes != b.n_classes:
+    """Swap one slot from b into a. Networks must agree on shape."""
+    if a.K != b.K or a.n_classes != b.n_classes or a.n_regions != b.n_regions:
         raise ValueError(
-            f"crossover: shape mismatch ({a.K}/{a.n_classes} vs "
-            f"{b.K}/{b.n_classes})"
+            f"crossover: shape mismatch "
+            f"(a: K={a.K}/n_classes={a.n_classes}/n_regions={a.n_regions} vs "
+            f"b: K={b.K}/n_classes={b.n_classes}/n_regions={b.n_regions})"
         )
     n_slots = a.K + a.n_classes
     slot = rng.randrange(n_slots)
@@ -554,6 +639,7 @@ def crossover_networks(
         return SymbolicNetwork(
             layer_1_trees=tuple(new_l1),
             layer_2_trees=a.layer_2_trees,
+            n_regions=a.n_regions,
         )
     class_idx = slot - a.K
     new_l2 = list(a.layer_2_trees)
@@ -561,6 +647,7 @@ def crossover_networks(
     return SymbolicNetwork(
         layer_1_trees=a.layer_1_trees,
         layer_2_trees=tuple(new_l2),
+        n_regions=a.n_regions,
     )
 
 
@@ -638,6 +725,7 @@ class NetworkGPConfig:
     n_gens: int = 30
     K: int = 4
     n_classes: int = 2    # binary by default; set to N for N-class
+    n_regions: int = 4    # spatial pooling resolution (1=global mean, 4=quadrants, 9=3x3)
     layer_1_max_depth: int = 3
     layer_2_max_depth: int = 3
     enable_2d: bool = True
@@ -675,7 +763,7 @@ def run_network_gp(
     pop: list[NetworkCandidate] = []
     while len(pop) < cfg.pop_size:
         net = random_network(
-            rng, K=cfg.K, n_classes=cfg.n_classes,
+            rng, K=cfg.K, n_classes=cfg.n_classes, n_regions=cfg.n_regions,
             layer_1_max_depth=cfg.layer_1_max_depth,
             layer_2_max_depth=cfg.layer_2_max_depth,
             enable_2d=cfg.enable_2d,
