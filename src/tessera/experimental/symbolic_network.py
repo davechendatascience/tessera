@@ -63,7 +63,7 @@ from typing import Callable, Optional
 import numpy as np
 
 from tessera.expression.tree import (
-    Node, Var, Const, BinOp, evaluate, complexity as tree_complexity,
+    Node, Var, Const, BinOp, UnOp, evaluate, complexity as tree_complexity,
 )
 from tessera.expression.mutation import (
     random_tree, mutate as tree_mutate, validate_tree,
@@ -657,6 +657,78 @@ def random_network(
 
 
 # ---------------------------------------------------------------------
+# Warm-start: combine one-vs-rest binary nets into one direct N-class net
+# ---------------------------------------------------------------------
+
+def _remap_feature_indices(node: Node, offset: int) -> Node:
+    """Return a copy of a pointwise layer-2 tree with every feature Var
+    `f{i}` renamed to `f{i+offset}`. Used to relocate a binary net's
+    classifier into its slot within a combined feature vector."""
+    if isinstance(node, Var):
+        if node.name.startswith("f") and node.name[1:].isdigit():
+            return Var(f"f{int(node.name[1:]) + offset}")
+        return node
+    if isinstance(node, Const):
+        return node
+    if isinstance(node, UnOp):
+        return UnOp(node.op, _remap_feature_indices(node.a, offset))
+    if isinstance(node, BinOp):
+        return BinOp(node.op,
+                     _remap_feature_indices(node.a, offset),
+                     _remap_feature_indices(node.b, offset))
+    return node  # FunctionalOp/2D shouldn't appear in layer-2 trees
+
+
+def warm_start_from_binary(binary_networks: list) -> SymbolicNetwork:
+    """Build one direct N-class network from N one-vs-rest binary nets.
+
+    Each binary net `d` discovered K layer-1 features tuned to detect
+    digit d, plus a 2-tree layer-2 head (class 0 = "not d", class 1 =
+    "is d"). This combines them:
+
+      - Layer 1 = concatenation of ALL nets' layer-1 trees
+        (N · K trees → N · K · n_regions features).
+      - Class-d head = (net_d.class1 − net_d.class0), with its feature
+        indices remapped to net d's slot in the combined feature vector.
+
+    At gen 0 the combined network's argmax over the N heads exactly
+    reproduces the one-vs-rest argmax(p1 − p0) prediction — so GP
+    refinement starts from the one-vs-rest accuracy and (under μ+λ)
+    can only improve from there.
+
+    All input nets must share (K, n_regions, input_channels).
+    """
+    nets = list(binary_networks)
+    if not nets:
+        raise ValueError("warm_start_from_binary: empty network list")
+    K = nets[0].K
+    R = nets[0].n_regions
+    ch = nets[0].input_channels
+    for net in nets:
+        if net.K != K or net.n_regions != R or net.input_channels != ch:
+            raise ValueError("warm_start_from_binary: nets must share "
+                             "(K, n_regions, input_channels)")
+        if net.n_classes != 2:
+            raise ValueError("warm_start_from_binary: expects binary nets")
+
+    layer_1: list[Node] = []
+    heads: list[Node] = []
+    for d, net in enumerate(nets):
+        offset = d * K * R
+        layer_1.extend(net.layer_1_trees)
+        c1 = _remap_feature_indices(net.layer_2_trees[1], offset)
+        c0 = _remap_feature_indices(net.layer_2_trees[0], offset)
+        heads.append(BinOp("sub", c1, c0))
+
+    return SymbolicNetwork(
+        layer_1_trees=tuple(layer_1),
+        layer_2_trees=tuple(heads),
+        n_regions=R,
+        input_channels=ch,
+    )
+
+
+# ---------------------------------------------------------------------
 # Mutation + crossover (at the network level)
 # ---------------------------------------------------------------------
 
@@ -865,11 +937,19 @@ def run_network_gp(
     cfg: NetworkGPConfig,
     images_test: Optional[np.ndarray] = None,
     labels_test: Optional[np.ndarray] = None,
+    seed_networks: Optional[list] = None,
 ) -> tuple[NetworkCandidate, list[dict]]:
     """Run the network-aware GP. Returns (best_candidate_ever, history).
 
     History is a list of per-generation dicts:
       {gen, best_loss, best_train_acc, best_test_acc, best_cx, mean_loss}
+
+    `seed_networks`: optional list of SymbolicNetwork objects to inject
+    into the initial population (e.g. a warm-start network from
+    `warm_start_from_binary`). They are scored and placed at the front;
+    random networks fill the remainder. Seeds must match cfg's
+    (n_regions, input_channels); their K may differ from cfg.K (the GP
+    handles heterogeneous K across individuals via per-slot ops).
     """
     rng = random.Random(cfg.seed)
 
@@ -888,21 +968,40 @@ def run_network_gp(
 
     cdiv = float(cfg.n_classes) if cfg.normalize_parsimony_by_classes else 1.0
 
-    # Initialize.
+    def _score(net: SymbolicNetwork) -> NetworkCandidate:
+        loss = network_loss(net, train_ch, labels_train,
+                            parsimony=cfg.parsimony, use_jax=use_jax,
+                            complexity_divisor=cdiv)
+        acc = network_accuracy(net, train_ch, labels_train, use_jax=use_jax)
+        return NetworkCandidate(network=net, loss=loss, accuracy=acc)
+
     pop: list[NetworkCandidate] = []
+
+    # Seed networks (e.g. warm-start) go in first. The population must be
+    # shape-homogeneous for crossover to work, so when seeds are present
+    # the random fill matches the seed's K / n_classes (which can differ
+    # from cfg.K — a warm-start net has K = N·K_binary).
+    fill_K = cfg.K
+    fill_n_classes = cfg.n_classes
+    if seed_networks:
+        for snet in seed_networks:
+            pop.append(_score(snet))
+            if cfg.verbose:
+                print(f"[gp] seeded network: K={snet.K}, "
+                      f"n_classes={snet.n_classes}, cx={snet.complexity}, "
+                      f"acc={pop[-1].accuracy:.3f}")
+        fill_K = seed_networks[0].K
+        fill_n_classes = seed_networks[0].n_classes
+
     while len(pop) < cfg.pop_size:
         net = random_network(
-            rng, K=cfg.K, n_classes=cfg.n_classes, n_regions=cfg.n_regions,
+            rng, K=fill_K, n_classes=fill_n_classes, n_regions=cfg.n_regions,
             input_channels=cfg.input_channels,
             layer_1_max_depth=cfg.layer_1_max_depth,
             layer_2_max_depth=cfg.layer_2_max_depth,
             enable_2d=cfg.enable_2d,
         )
-        loss = network_loss(net, train_ch, labels_train,
-                            parsimony=cfg.parsimony, use_jax=use_jax,
-                            complexity_divisor=cdiv)
-        acc = network_accuracy(net, train_ch, labels_train, use_jax=use_jax)
-        pop.append(NetworkCandidate(network=net, loss=loss, accuracy=acc))
+        pop.append(_score(net))
 
     best_ever = min(pop, key=lambda c: c.loss)
     history: list[dict] = []
@@ -982,6 +1081,7 @@ __all__ = [
     "evaluate_network_jax_batch",
     "clear_jax_tree_cache",
     "random_network",
+    "warm_start_from_binary",
     "mutate_network",
     "crossover_networks",
     "network_loss",
