@@ -121,6 +121,7 @@ def _gen_trees(size, feature_names, cfg, memo):
         if k not in seen:
             seen.add(k); out.append(t)
 
+    cap = cfg.max_features                 # bound per-size to avoid blow-up
     if size == 0:
         for name in feature_names:
             add(Var(name))
@@ -129,6 +130,9 @@ def _gen_trees(size, feature_names, cfg, memo):
     for op in cfg.unary:
         for c in _gen_trees(size - 1, feature_names, cfg, memo):
             add(UnOp(op, c))
+        if len(out) >= cap:
+            memo[size] = out
+            return out
     for op in cfg.binary:
         comm = op in COMMUTATIVE
         for ls in range(size):
@@ -140,6 +144,12 @@ def _gen_trees(size, feature_names, cfg, memo):
                     if comm and kl > _key(cr):
                         continue
                     add(BinOp(op, cl, cr))
+                if len(out) >= cap:
+                    break
+            if len(out) >= cap:
+                break
+        if len(out) >= cap:
+            break
     memo[size] = out
     return out
 
