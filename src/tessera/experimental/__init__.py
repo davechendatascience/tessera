@@ -64,6 +64,7 @@ Inventory (current)
 | adaptive_search.py | C6 (process_discovery_sr.md §6.6) | **VALIDATED-AS-PREDICTED** — adaptive ≈ baseline; pre-analysis predicted no effect; experiment confirmed exactly | 2026-05-26 |
 | ~~counterfactual_eval.py~~ | ~~C5~~ | **GRADUATED 2026-05-29** → `tessera.search.counterfactual_eval`. Validated on heat eq + Feynman cross-bench. First basket conjecture to graduate. | 2026-05-29 |
 | coordinate_discovery.py | C7 (c7_coordinate_discovery.md) | **NEUTRAL on Feynman** — empirically equivalent to decompose v2 (+10 exact, 0 regressions; SAME 10 transitions). Architectural generalization correct; no empirical value on this benchmark because transforms {identity, sqrt_abs, square, inverse} are linearly equivalent in log-log space, and log_abs duplicates exp_wrapper. Stay experimental pending real-data evaluation. | 2026-05-29 |
+| additive_polynomial.py | C8 (c8_additive_polynomial.md) | **PARTIAL VALIDATION** — A/B gave +1 exact (I.11.19 dot product), 0 regressions. Genuine polynomial cases caught cleanly. Polynomial-approximation seeds for non-polynomial forms (Gaussians, distance, Lorentz, Boltzmann) did NOT bootstrap GP into true forms — selection killed inferior approximation seeds. Hypothesis "seed-as-approximation enables true-form discovery" FALSIFIED on Feynman; narrow "seed-as-correct-polynomial" works. Stay experimental. | 2026-05-29 |
 
 Reports:
 - `benchmarks/results/heat_equation_abc_mvp71.md`
@@ -73,6 +74,7 @@ Reports:
 - `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`  [C5 — graduated 2026-05-29]
 - `benchmarks/results/feynman_counterfactual_validation.md`     [C5 — graduated 2026-05-29]
 - `benchmarks/results/feynman_coord_discovery_ab.md`
+- `benchmarks/results/feynman_additive_poly_ab.md`  [C8 — A/B 2026-05-29]
 
 To add a module: copy this checklist into the new module's docstring:
 

@@ -274,6 +274,110 @@ resolution dataset doesn't admit meaningful lagged-P improvement.
 Western basins show TEST<TRAIN ratios (0.69-0.94) reflecting climate
 non-stationarity rather than GP overfit.
 
+### Added (2026-05-29 → C8 additive polynomial detector + hybrid symbolic networks scoping)
+
+User direction: after C5 graduation, asked "do you think the experimental
+submodule has anything that can promoted to the standard modules?" then
+"let's create c8? But what is it about?" and "we should also think about
+building structure for mnist benchmark."
+
+Two pieces shipped together:
+
+**C8 — additive polynomial structure detector** (experimental)
+
+NEW src/tessera/experimental/additive_polynomial.py (~280 LOC)
+
+Complements decompose v2 (multiplicative products + exp wrappers) by
+detecting ADDITIVE structure: sums of monomials. Protocol:
+- Enumerate monomials of total degree 1..D in feature variables
+- Solve OLS: y = c₀ + Σ_α c_α · monomial_α(x)
+- Top-N filter by |c|; build seed tree as sum of products
+
+Per experimental discipline (production doesn't import from
+experimental), seeds inject via GPConfig.precomputed_seed_trees in
+A/B runner.
+
+NEW docs/research/c8_additive_polynomial.md
+
+Pre-analysis: smoke test showed C8 reaches R²≥0.99 on 18/30 Feynman
+(D=3) and 25/30 (D=4), including many decompose v2 misses (dot product,
+Gaussians via Taylor, distance via squared form, Lorentz, center-of-mass,
+Boltzmann). The interesting question: do polynomial-APPROXIMATION seeds
+bootstrap the GP into discovering the true non-polynomial form?
+
+NEW benchmarks/run_feynman_additive_poly_ab.py
+NEW benchmarks/results/feynman_additive_poly_ab.md
+
+A/B VERDICT: PARTIAL VALIDATION
+
+| arm | exact | partial | failed |
+|---|---|---|---|
+| OFF (decompose v2)      | 20 | 6 | 4 |
+| ON  (decompose v2 + C8) | 21 | 5 | 4 |
+
++1 exact, 0 regressions. Only transition: **I.11.19 (dot product
+`x1·y1 + x2·y2 + x3·y3`)** — the only genuine polynomial form in the
+30-eq subset. OFF partial (rel=0.045, cx=15) → ON exact (rel=0.000,
+cx=11).
+
+NO other transitions. Polynomial-approximation seeds for Gaussians,
+distance, Lorentz, center-of-mass, Boltzmann did NOT bootstrap the GP
+into the true forms (sqrt, exp, sin, 1/x). The seeds couldn't survive
+Pareto-front selection — their loss was much higher than the true-form
+loss decompose v2 already discovered.
+
+VERDICT vs graduation criterion (≥+2 new exacts): NOT MET.
+VERDICT vs removal criterion (0 new exacts OR ≥1 regression): NOT MET.
+STAYS experimental as PARTIAL VALIDATION.
+
+CROSS-EXPERIMENT LESSON
+
+Seed injection works when the seed IS the correct form. It does NOT
+work when the seed is an APPROXIMATION of a different functional
+class. This matches the pattern from decompose v2 (seeds that ARE
+power-laws → +10 exact) and C7 (no new structure → no improvement).
+
+The C5 architectural insight is reinforced: the productive layers are
+"detect-then-seed where the seed has the right STRUCTURE" and
+"selection-layer post-hoc evaluation." Both work because they operate
+on correctness at the structural level. Approximation-seeds violate
+this because they're structurally wrong (different functional class).
+
+**Hybrid symbolic networks scoping** (research only — no code yet)
+
+NEW docs/research/hybrid_symbolic_networks.md
+
+Scoping note for the symbolic-network direction. Captures three
+flavors:
+1. Symbolic features + neural classifier (tessera features → MLP)
+2. **Neural prepass + symbolic network** (recommended) — train CNN
+   teacher, extract filters as symbolic seed trees, GP refines into
+   interpretable symbolic NETWORK. Generalizes Cranmer et al. 2020
+   single-equation distillation to whole-network distillation.
+3. Fixed primitives + symbolic composition (DreamCoder-like)
+
+Architecture sketch: 2-layer symbolic network with K=16 layer-1
+feature trees (image → scalar) + 10 layer-2 class scorers (features
+→ score). Argmax across 10 → digit. GP unit = the full 26-tree
+network.
+
+MVP path with milestones:
+- A: Network dataclass + 2-class problem (digit 0 vs 1), success
+  = TEST > 0.95 (vs 0.80 single-tree)
+- B: Hybrid #2 + neural prepass, success = TEST > CNN baseline OR
+  measurably smaller cx + interpretability documentable
+- C: 10-class full MNIST, success = TEST > 0.90 + interpretable
+  feature basis
+- D: Cross-domain (Fashion-MNIST, CIFAR if scope allows)
+
+Missing infrastructure documented: Network dataclass, network-aware
+GP loop, image-aware Measure2D extensions, aggregator vocabulary,
+neural prepass, network-level Class A/B/C diagnostic, cross-entropy
+loss.
+
+Open questions, falsification anchors, scoping caveats included. No
+code yet; resumes when scope work begins.
+
 ### Changed (2026-05-29 → C5 counterfactual_eval GRADUATED to production)
 
 User direction: "do you think the experimental submodule has anything
