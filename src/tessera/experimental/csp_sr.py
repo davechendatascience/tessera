@@ -87,13 +87,13 @@ class CSPSRConfig:
     nonlinear_const: bool = False
     nl_max_size: int = 3
     nl_max_templates: int = 1200
-    # GPU compatibility: evaluate the feature dictionary on jax.numpy
-    # (device) and transfer Φ to host once for the fit. This is the EAGER
-    # path — one XLA dispatch per feature-subexpression — so on CPU it is
-    # SLOWER than numpy (dispatch overhead, no GPU payoff). It helps only
-    # on an actual GPU with large N (big array ops amortize dispatch). The
-    # genuinely fast path is jit-fusion via the opcode-tape interpreter
-    # (compile once, run all features as data) — deferred (task: GPU path).
+    # GPU: build the feature matrix Φ via the jit'd opcode-tape interpreter
+    # (symbolic_interp) — every feature tree is encoded as a fixed-length
+    # tape and run through an interpreter compiled ONCE, so there is no
+    # per-feature compile and no eager per-op dispatch. The fit then runs on
+    # the host. On CPU this is slower than numpy (compile + dispatch, no GPU
+    # payoff); the win is on an actual GPU at scale (large N / many
+    # features). Falls back to numpy if jax/encoding is unavailable.
     use_jax: bool = False
 
 
@@ -210,6 +210,41 @@ def _make_evaluator(env, xp=np):
     return ev
 
 
+def _node_count(n):
+    if isinstance(n, (Var, Const)):
+        return 1
+    if isinstance(n, UnOp):
+        return 1 + _node_count(n.a)
+    return 1 + _node_count(n.a) + _node_count(n.b)
+
+
+def _build_phi_interp(trees, env, feature_names, log):
+    """Build Φ (N, F) via the jit'd opcode-tape interpreter
+    (`symbolic_interp`): encode every feature tree as a fixed-length tape,
+    compile the interpreter ONCE, run all tapes through it. No per-feature
+    compile and no eager per-op dispatch — the GPU-scalable Φ build.
+    Returns (kept_trees, Phi) or (None, None) if jax/encoding unavailable."""
+    try:
+        import jax.numpy as jnp
+        from tessera.experimental.symbolic_interp import encode_trees, run_trees
+    except Exception:
+        return None, None
+    if not trees:
+        return None, None
+    var_index = {n: i for i, n in enumerate(feature_names)}
+    max_nodes = max(_node_count(t) for t in trees)
+    tapes = encode_trees(trees, var_index, max_nodes)   # None if any unsupported op
+    if tapes is None:
+        return None, None
+    var_values = jnp.asarray(
+        np.stack([np.asarray(env[n], dtype=np.float32) for n in feature_names]))
+    log(f"interpreter: compile-once, {len(tapes)} tapes, max_nodes={max_nodes}")
+    outs = run_trees(tapes, var_values, max_nodes)      # list of (N,) device arrays
+    # to host as float32, then upcast in numpy (avoids jax x64 astype warning)
+    Phi = np.stack([np.asarray(o).astype(np.float64) for o in outs], axis=1)  # (N, F)
+    return list(trees), Phi
+
+
 def _build_dictionary(env, y, candidate_trees, cfg, log):
     """Evaluate candidate trees into a design matrix Φ (host numpy).
 
@@ -244,30 +279,43 @@ def _build_dictionary(env, y, candidate_trees, cfg, log):
             return [], None, []
         return feats, np.stack(cols, axis=1), sizes
 
-    # ---- GPU path ----
-    import jax.numpy as jnp
-    envx = {k: jnp.asarray(np.asarray(v), dtype=jnp.float32) for k, v in env.items()}
-    ev = _make_evaluator(envx, jnp)
-    cols = []
-    for t in candidate_trees:
-        try:
-            col = ev(t)
-        except Exception:
+    # ---- GPU path: jit'd opcode-tape interpreter (compile once) ----
+    cand = list(candidate_trees)[:cfg.max_features]
+    kept, Phi_all = _build_phi_interp(cand, env, list(env.keys()), log)
+    if Phi_all is None:                       # jax/encoding unavailable -> numpy
+        log("interpreter unavailable; falling back to numpy")
+        ev = _make_evaluator(env, np)
+        cols, seen = [], set()
+        for t in cand:
+            try:
+                col = np.asarray(ev(t), dtype=np.float64)
+            except Exception:
+                continue
+            if col.shape != (N,) or not np.all(np.isfinite(col)) \
+                    or float(np.std(col)) < 1e-9:
+                continue
+            h = hash(np.round(col, 6).tobytes())
+            if h in seen:
+                continue
+            seen.add(h)
+            feats.append(t); cols.append(col); sizes.append(_size(t))
+        return (feats, np.stack(cols, axis=1), sizes) if feats else ([], None, [])
+    # filter (finite/variance) + numerical dedup on the host Φ
+    cols, seen = [], set()
+    for t, col in zip(kept, Phi_all.T):
+        col = np.asarray(col, dtype=np.float64)
+        if col.shape != (N,) or not np.all(np.isfinite(col)) \
+                or float(np.std(col)) < 1e-9:
             continue
-        feats.append(t); cols.append(col)
-        if len(feats) >= cfg.max_features:
-            log(f"feature cap {cfg.max_features} hit")
-            break
+        h = hash(np.round(col, 6).tobytes())
+        if h in seen:
+            continue
+        seen.add(h)
+        feats.append(t); cols.append(col); sizes.append(_size(t))
     if not feats:
         return [], None, []
-    Phi_dev = jnp.stack(cols, axis=1)                      # (N, F) on GPU
-    finite = jnp.all(jnp.isfinite(Phi_dev), axis=0)
-    keep = np.asarray(finite & (jnp.std(Phi_dev, axis=0) > 1e-9))   # (F,) to host
-    Phi = np.asarray(Phi_dev, dtype=np.float64)[:, keep]   # one bulk transfer
-    feats = [f for f, k in zip(feats, keep) if k]
-    sizes = [_size(f) for f in feats]
-    log(f"GPU dictionary: {Phi.shape[1]} features (numerical dedup skipped)")
-    return feats, Phi, sizes
+    log(f"interpreter dictionary: {len(feats)} features")
+    return feats, np.stack(cols, axis=1), sizes
 
 
 # --------------------------------------------------------------------
