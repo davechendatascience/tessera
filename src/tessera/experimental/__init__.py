@@ -63,6 +63,7 @@ Inventory (current)
 | mdl_scoring.py | C3 (process_discovery_sr.md §6.3) | **FALSIFIED** — calibration math right, effect below empirical noise; ad-hoc effectively equivalent | 2026-05-26 |
 | adaptive_search.py | C6 (process_discovery_sr.md §6.6) | **VALIDATED-AS-PREDICTED** — adaptive ≈ baseline; pre-analysis predicted no effect; experiment confirmed exactly | 2026-05-26 |
 | counterfactual_eval.py | C5 (process_discovery_sr.md §6.5) | **VALIDATED (selection-layer)** — CF ranking reliably picks mechanism-capturing candidates from Pareto front (2/2 when present); FIRST validated-positive basket conjecture | 2026-05-26 |
+| coordinate_discovery.py | C7 (c7_coordinate_discovery.md) | **NEUTRAL on Feynman** — empirically equivalent to decompose v2 (+10 exact, 0 regressions; SAME 10 transitions). Architectural generalization correct; no empirical value on this benchmark because transforms {identity, sqrt_abs, square, inverse} are linearly equivalent in log-log space, and log_abs duplicates exp_wrapper. Stay experimental pending real-data evaluation. | 2026-05-29 |
 
 Reports:
 - `benchmarks/results/heat_equation_abc_mvp71.md`
@@ -70,6 +71,7 @@ Reports:
 - `benchmarks/results/heat_equation_mdl_mvp_c3.md`
 - `benchmarks/results/heat_equation_adaptive_mvp_c6.md`
 - `benchmarks/results/heat_equation_counterfactual_mvp_c5.md`
+- `benchmarks/results/feynman_coord_discovery_ab.md`
 
 To add a module: copy this checklist into the new module's docstring:
 

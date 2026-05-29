@@ -223,6 +223,22 @@ class GPConfig:
     log-log regression to explain 99% of variance. Non-power-law
     targets are rejected and the pre-pass is a no-op."""
 
+    precomputed_seed_trees: tuple = ()
+    """User-provided seed trees injected into the initial population
+    before random fill. Used by experimental prepass modules
+    (`tessera.experimental.*`) to inject their seeds without modifying
+    gp.py's production prepass logic. Tuple of Node objects (subclasses
+    of tessera.expression.tree.Node). Each tree validates against
+    feature_names before insertion; invalid seeds are silently dropped.
+
+    Production code (the decompose prepass via decompose_prepass_enabled)
+    contributes its seeds in addition to these. To use experimental
+    seeds ALONE, leave decompose_prepass_enabled=False (default) and
+    populate this list. To stack experimental seeds on top of the
+    production prepass, enable both.
+
+    Default empty tuple. Tuple-typed for dataclass-default immutability."""
+
     # Algebraic simplification
     simplify_trees: bool = True
     """If True (default), each scored tree is passed through `simplify()`
@@ -478,6 +494,15 @@ class GP:
                     seed_trees.append(seed_tree)
                     if self.cfg.verbose:
                         print(f"[gp] decompose pre-pass seeded: {fit}")
+
+        # Experimental / caller-provided seeds (see GPConfig
+        # docstring). Validated before inclusion; invalid silently
+        # dropped.
+        for st in self.cfg.precomputed_seed_trees:
+            if validate_tree(st, set(feature_names)) is None:
+                seed_trees.append(st)
+                if self.cfg.verbose:
+                    print(f"[gp] precomputed seed accepted: {str(st)[:80]}")
 
         pop = self._init_population(feature_names, env, y_true,
                                     seed_trees=seed_trees)

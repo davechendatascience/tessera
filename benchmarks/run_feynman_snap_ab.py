@@ -36,6 +36,7 @@ import sys
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from run_feynman_extended import SUBSET  # noqa: E402
+from feynman_common import classify_feynman_verdict as classify_verdict  # noqa: E402
 
 
 def run_with_snap(name, sampler, snap: bool, n_gens: int, pop_size: int):
@@ -73,16 +74,6 @@ def run_with_snap(name, sampler, snap: bool, n_gens: int, pop_size: int):
         best_cx=best.complexity, best_loss=best.train_loss, best_rel=rel,
         best_tree=str(best.tree), var_y=var_y,
     )
-
-
-def classify_verdict(rel: float) -> str:
-    if not np.isfinite(rel):
-        return "failed"
-    if rel < 0.01:
-        return "exact"
-    if rel < 0.20:
-        return "partial"
-    return "failed"
 
 
 def main(argv=None):

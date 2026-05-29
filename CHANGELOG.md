@@ -6,6 +6,377 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed (2026-05-28 → GP cross-process determinism — `_OP_SWAP_GROUPS` was sets)
+
+User-reported finding: cross-A/B baseline drift on Feynman (8 vs 9 vs 12
+exact across reports run on the same code state, same seed=2026, all new
+flags False). The within-A/B comparison was meaningful but the OFF-arm
+baseline was inconsistent across runs.
+
+Bisection traced to `src/tessera/expression/mutation.py:387`
+`_OP_SWAP_GROUPS` was stored as `list[set[str]]`. Set iteration order in
+Python depends on PYTHONHASHSEED (on by default since 3.3 for DoS
+protection). When `op_swap()` picked a replacement operator via
+`others = [o for o in group if o != sub.op]`, the list-comprehension
+inherited the set's iteration order. `rng.choice(others)` with identical
+RNG state then returned different operators across separate Python
+invocations — divergent GP trajectories from gen ~5 onward.
+
+Fix: `_OP_SWAP_GROUPS` is now `list[tuple[str, ...]]` with sorted entries.
+Tuple iteration order is canonical. Source comment names the trap so it
+doesn't get reintroduced.
+
+NEW tests/search/test_gp_determinism.py (~120 LOC, 5 tests):
+- `test_op_swap_groups_are_tuples_not_sets` — static structure check
+- `test_op_swap_groups_are_sorted` — canonical order check
+- 3 × `test_gp_deterministic_across_hashseeds[h]` — parameterized
+  integration test, runs the GP in 3 subprocesses with different
+  PYTHONHASHSEED values, requires bit-identical output
+
+VERIFIED
+- Before fix: 3 separate `python` invocations on same Feynman equation
+  with same seed gave 3 different (cx, loss, tree) triples
+- After fix: bit-identical results across all PYTHONHASHSEED values
+- All 20 existing mutation tests still pass
+
+IMPLICATION FOR PRIOR A/Bs
+
+Within-A/B comparisons (same seed, same process, different config flag)
+remain valid — the determinism leak affected both arms equally. The
++10 exact decompose result is genuine. Cross-A/B OFF-baseline drift
+is explained and won't recur.
+
+### Added (2026-05-28 → Feynman improvements: snap A/B negative, decompose +10 exact)
+
+Two new pre-search detectors. One falsified empirically; one shipped
+with strong positive evidence. Both opt-in via GPConfig flags
+(default OFF) per the §6 methodological discipline.
+
+NEW src/tessera/search/const_snap.py (~210 LOC)
+
+**Step 2 — constant snapping.** After scipy's `optimize_constants`
+polish, fitted scalars are usually close-but-not-exact to canonical
+physical values (1/(4π), 1/(6π), 1/2, e, √2 etc.). The snap module
+rounds each fitted Const to the nearest member of a ~94-entry hand-
+curated library when within `rel_tol=0.005` (0.5%) — IF the snapped
+tree's loss is no worse than the polished tree's.
+
+Locally loss-preserving by construction. Library is hand-curated from
+canonical forms appearing in any intro physics curriculum (integers,
+small rationals, π/e/√ in canonical positions); does not reference
+the Feynman benchmark.
+
+Wired into `_polish_pareto_constants` via new GPConfig flag
+`snap_constants_enabled: bool = False`.
+
+NEW benchmarks/run_feynman_snap_ab.py (~240 LOC)
+NEW benchmarks/results/feynman_snap_ab.md
+
+A/B VERDICT: NEGATIVE.
+
+| arm | exact | partial | failed |
+|---|---|---|---|
+| snap=OFF | 12 | 12 | 6 |
+| snap=ON  | 11 | 12 | 7 |
+
+Net -1 exact. Five transitions: 2 wins (failed→partial: I.30.3 Bragg,
+I.43.31 Stokes-Einstein), 3 regressions (exact→failed: I.12.11;
+partial→failed: I.32.5, I.43.43).
+
+ROOT CAUSE OF NET-NEGATIVE
+
+The snap *operation* is locally loss-preserving (verified in code:
+only accepted if `candidate_loss ≤ current_loss + tol`). But snap is
+NOT safe at the GP-trajectory level: when a snapped tree displaces
+the original in the Pareto front, subsequent mutations operate on
+different "genetic material" and the run evolves a different
+trajectory. With seed=2026 on I.12.11, that divergence killed a
+previously-found exact form.
+
+Module shipped opt-in pending multi-seed verification. Honest empirical
+result rather than premature default-on.
+
+NEW src/tessera/search/decompose.py (~330 LOC)
+
+**Step 3 — decomposition pre-pass.** Architectural pattern: cheap
+structural detectors fire before GP search; inject seed trees into the
+initial population; let selection determine survival.
+
+Two detectors:
+
+1. `detect_power_law(env, y, r2_threshold=0.99)`
+   Tests if `log|y| ≈ a₀ + Σ aᵢ log|xᵢ|` via OLS in log-log space.
+   Catches `C·∏xᵢ^{aᵢ}` forms (Coulomb, Stokes-Einstein, ideal gas,
+   Larmor, kinetic/spring energy, sound speed, ...).
+
+2. `detect_exp_wrapper(env, y, r2_threshold=0.99)`
+   Applies power-law detection to `|log|y||` with sign inference.
+   Catches `f = ±exp(C·∏xᵢ^{aᵢ})` — Gaussian forms (I.6.20a, I.6.20).
+
+Orchestrator `power_law_seed()` tries base power-law first, exp-wrapper
+as fallback, returns best seed.
+
+Tree builder `build_power_law_tree()` handles exponents specially:
+- integer 1 → bare Var
+- integer −1 → 1/Var (avoids safe-pow base/exp clipping)
+- integer 2 → Var*Var (smaller cx than pow(Var,2))
+- integer ½ → sqrt(Var)
+- otherwise → pow(Var, Const)
+
+Wired into `gp.run()` via new GPConfig flag
+`decompose_prepass_enabled: bool = False` and threshold
+`decompose_prepass_r2_threshold: float = 0.99`.
+
+NEW benchmarks/run_feynman_decompose_ab.py — power-law only (v1)
+NEW benchmarks/run_feynman_decompose_v2_ab.py — power-law + exp-wrapper
+NEW benchmarks/results/feynman_decompose_ab.md
+NEW benchmarks/results/feynman_decompose_v2_ab.md
+
+A/B VERDICT (v2, both detectors): STRONGLY POSITIVE.
+
+| arm | exact | partial | failed |
+|---|---|---|---|
+| prepass=OFF | 10 | 14 | 6 |
+| prepass=ON  | 20 | 6  | 4 |
+
+**+10 exact, 0 regressions.** 10 transitions:
+- 8 partial→exact: Coulomb ×2, q1·q2/r², 0.5kx², Larmor, qvB/p,
+  Stokes-Einstein, κv²/(nσ), √(γpr/ρ)
+- 2 failed→exact: I.12.2 (Coulomb), I.6.20 (Gaussian)
+
+3 false-positive seeds (Newton gravity 9-var, two relativistic forms
+with v/c≪1) correctly selected out by GP — selection layer protects
+against detector errors as designed.
+
+INDEPENDENT JUSTIFICATION (§6.1 discipline): power laws are a
+universal mathematical class; log-log linear regression has been
+used to identify them since the 19th century. The test does not
+reference Feynman.
+
+HELD-OUT EMPIRICAL TEST (§6.2): non-power-law equations unaffected
+(false-positive seeds correctly killed by GP). Confirms detector
+is silent on non-matching data — same behavior verified later on
+BTC 1h streamflow target (power-law R² ≈ 0.002 → no seed injected).
+
+### Added (2026-05-29 → TRAIN/TEST methodology on real-data benchmarks)
+
+Apply the §6 methodological discipline from
+`docs/research/from_data_to_mechanism.md` (TRAIN/TEST split + Class
+A/B/C taxonomy) to two real-data benchmarks. Both inherit the
+chronological-split + per-candidate TEST evaluation + verdict-column
+pattern that's standard on the Feynman side.
+
+NEW benchmarks/run_weather_pde_traintest.py (~490 LOC)
+NEW benchmarks/results/weather_pde_traintest.md
+
+Extension of the existing weather PDE rediscovery benchmark with:
+- Chronological 75/25 split on mid-latitude row slice
+- TRAIN-fit oracles evaluated on TRAIN + TEST
+- Per-Pareto-candidate TEST evaluation
+- Class A/B/C verdict via TEST/TRAIN ratio + train_rel threshold
+
+EMPIRICAL FINDING — bigger search budget reveals Class C
+
+Small budget (pop=120, gens=50, prior run): GP early-stopped at gen 25
+with cx=4 `cos(0.07·T)` — verdict A-generic.
+
+Larger budget (pop=300, gens=120, this run): GP discovered cx=4
+`0.385·∇²T` — literally the textbook 5-point 1D Laplacian. TRAIN MSE
+matches oracle (9.345 vs 9.343); TEST MSE slightly beats oracle
+(12.04 vs 12.06, 0.2% improvement). TEST/TRAIN ratio 1.29 matches
+oracle's 1.29 exactly.
+
+THIS IS A CLASS C RESULT mathematically — same generalization profile
+as the analytical baseline. The verdict classifier currently reads
+A-generic only because the train_rel threshold (0.96) was hardcoded
+for Feynman noiseless data; oracle ceiling on noisy real data sits
+at ~0.963 so the threshold needs oracle-relative calibration for this
+domain. Documented as known limitation.
+
+NEW benchmarks/data/load_camels_basin.py (~200 LOC)
+
+CAMELS-equivalent data loader for one basin from public APIs:
+- USGS NWIS daily mean discharge (parameter 00060)
+- DAYMET single-pixel daily forcing at basin centroid
+- Joined on date, log-transformed Q for stability
+- On-disk parquet cache per (gauge_id, start, end)
+- Five reference basins registered (humid/arid/snowmelt regimes)
+
+Avoids the 1.4 GB CAMELS archive download. Approximates basin-mean
+forcing by centroid-pixel (reasonable for mid-sized basins; degrades
+for very large basins — documented limitation).
+
+NEW benchmarks/run_camels_streamflow.py (~480 LOC)
+NEW benchmarks/results/camels_01013500.md
+
+First real-world unknown-GT benchmark. Targets `log Q[t+1]`.
+Two-anchor verdict classifier: persistence sets trivial bar,
+multilag-linear (P lags 0..7 + Q via lstsq) sets engineering bar
+that Class C must match.
+
+EMPIRICAL FINDING — persistence trap then escape via sufficient-stats polish
+
+Without polish: GP stuck at cx=1 `Q` (persistence). `log Q` has
+NSE_persistence ≈ 0.993, so the cx=1 candidate dominates the Pareto
+front; any new candidate with precipitation must beat persistence's
+loss to enter the front, but a random initial P-term has high loss,
+so the search never explores precipitation-based forms.
+
+With `sufficient_stats_polish_every=5` and feature_names including
+lagged P (P_lag{1,3,7,14}), degree=1, top_n=5: GP discovered
+
+    Q + 0.0076·P - 0.0003·P_lag1 - 0.0003·P_lag3
+      - 0.0011·P_lag7 - 0.0017·P_lag14
+
+at cx=21. TRAIN 0.00503 (30% below persistence), TEST 0.00594 (28%
+below persistence). TEST/TRAIN ratio 1.18 matches engineering's 1.18
+exactly → not overfitting. 7% gap to engineering on both halves;
+verdict A-generic.
+
+FORM IS HYDROLOGICALLY INTERPRETABLE
+
+The discovered form is a discrete instantaneous unit hydrograph
+(Sherman 1932) — the convolution form hydrologists posit. Positive
+coefficient on today's P (rapid response), small negative coefficients
+on lagged P (baseflow / antecedent moisture interaction). For a
+Maine snowmelt-mixed basin this is the right qualitative shape.
+
+NEW benchmarks/run_camels_multi_basin.py (~310 LOC)
+NEW benchmarks/results/camels_multi_basin.md
+
+Multi-basin sweep with the same polish pipeline on 5 reference basins
+spanning humid/arid/snowmelt regimes.
+
+EMPIRICAL FINDING — Class C on 2/5 basins
+
+| basin | climate | verdict |
+|---|---|---|
+| 01013500 Fish River ME | humid temperate | A-generic |
+| 02479155 Black Creek MS | humid subtropical | A-generic |
+| 06614800 Cache la Poudre CO | semi-arid snowmelt | trivial |
+| 09497500 Salt River AZ | arid | **C-mechanism-ish** |
+| 11264500 Merced River CA | Mediterranean snowmelt | **C-mechanism-ish** |
+
+All 5 escaped persistence by 14-35% on TRAIN. Two basins (Salt River
+AZ, Merced CA) reached Class C — match engineering within 5% on TRAIN
+AND within 10% on TEST.
+
+The verdict pattern is physically meaningful: Class C on basins where
+the polish's `{0,1,3,7,14}` lag basis matches natural timescales of
+buffered hydrology (snowpack, deep groundwater, ephemeral channels).
+A-generic on humid basins where fine-grained sub-week lags matter
+that the fixed basis misses.
+
+Cache la Poudre verdict reads "trivial" because engineering itself
+barely beats persistence (1.6% improvement) — on this basin the daily-
+resolution dataset doesn't admit meaningful lagged-P improvement.
+
+Western basins show TEST<TRAIN ratios (0.69-0.94) reflecting climate
+non-stationarity rather than GP overfit.
+
+### Added (2026-05-29 → C7 coordinate-discovery prepass — experimental, empirically neutral on Feynman)
+
+User direction (2026-05-29): asked whether topological system
+identification uses coordinate transforms. Implementation request:
+"as an experiment subtask, then figure out whether with it the
+performance gone up."
+
+CONJECTURE: a meaningful fraction of physical relationships look like
+power-law products in a TRANSFORMED target space, with the transform
+drawn from a small library `{identity, log_abs, sqrt_abs, square,
+inverse}`. Detecting transform AND power-law jointly should catch
+forms that aren't power-law in raw or log space but ARE in some other
+coordinate.
+
+NEW src/tessera/experimental/coordinate_discovery.py (~250 LOC)
+
+Implements C7 per the experimental discipline (see
+`tessera/experimental/__init__.py`):
+- TARGET_TRANSFORMS dict: 5 transforms (identity, log_abs, sqrt_abs,
+  square, inverse)
+- INVERSE_TRANSFORMS dict: tree-level wrappers (exp, x², sqrt, 1/x)
+- `detect_coord_discovery_seed(env, y)` orchestrator: try each
+  transform, return best fit + inverse-wrapped seed tree
+- CoordDiscoveryResult dataclass with per-transform R² for diagnostics
+
+NEW docs/research/c7_coordinate_discovery.md
+
+Full pre-analysis + result note per the discipline. Pre-analysis
+predicted: NEUTRAL on Feynman because in log-log space, transforms
+{identity, sqrt_abs, square, inverse} are all linearly equivalent
+(applying φ to y rescales the regression target by a constant or
+factor, leaving R² invariant). Only log_abs is genuinely different —
+and that's exactly the exp-wrapper detector's domain.
+
+NEW benchmarks/run_feynman_coord_discovery_ab.py (~250 LOC)
+NEW benchmarks/results/feynman_coord_discovery_ab.md
+
+A/B VERDICT: **NEUTRAL (pre-analysis prediction held)**.
+
+| arm | exact | partial | failed |
+|---|---|---|---|
+| C7=OFF | 10 | 13 | 7 |
+| C7=ON  | 20 | 6  | 4 |
+
+**+10 exact, 0 regressions. EXACTLY MATCHES decompose v2's +10.**
+
+The 10 promoted equations are identical to decompose v2's. C7 produces
+0 new transitions beyond what decompose v2 already produces.
+
+Smoke test confirmed the in-log-log-equivalence: across all 30 Feynman
+equations, identity / sqrt_abs / square / inverse gave bit-identical
+R² values. Only log_abs differed (and only on Gaussian forms where
+it correctly fires at R²=1.000).
+
+GRADUATION CRITERION ("at least +1 exact transition decompose v2
+doesn't produce"): NOT MET.
+REMOVAL CRITERION (no improvement on Feynman + no improvement on
+real data): partially met for Feynman; real-data untested.
+
+DECISION: stay experimental. The architectural generalization is
+correct (C7 strictly subsumes decompose v2) but adds no empirical
+value on Feynman because the existing detectors already cover the
+same coordinate space. Future evaluation needed on benchmarks where
+the natural target coordinate isn't already covered.
+
+### Added (2026-05-29 → GP `precomputed_seed_trees` config option — integration scaffolding)
+
+Added `precomputed_seed_trees: tuple = ()` to GPConfig. Caller-provided
+seed trees are validated and injected into the initial population
+alongside (not replacing) decompose-prepass seeds.
+
+PURPOSE: per the experimental discipline, production code does NOT
+import from `tessera.experimental`. Experimental modules like
+coordinate_discovery (C7) need a way to inject their seeds without
+violating this rule. The `precomputed_seed_trees` option is the
+clean injection point: experimental A/B runners compute their seeds
+externally and pass them through this config option. The GP itself
+remains agnostic to experimental code.
+
+The mechanism is general — useful beyond C7. Any future detector
+implemented downstream of GP can use it.
+
+### Refactored (2026-05-29 → shared Feynman verdict helper, integration tidy-up)
+
+The four Feynman A/B runners (snap, decompose, decompose_v2,
+coord_discovery) each had an identical `classify_verdict(rel)`
+function — three-tier exact/partial/failed classifier with the same
+thresholds 0.01 and 0.20.
+
+NEW benchmarks/feynman_common.py — extracts the verdict logic with
+named constants (EXACT_THRESHOLD, PARTIAL_THRESHOLD) and a clean
+`classify_feynman_verdict(rel)` function.
+
+Refactored 4 runners to import + alias. Verified by identity check:
+all 4 now reuse the same function object. Removed ~32 LOC of
+duplication.
+
+DELIBERATELY DID NOT consolidate the Weather and CAMELS verdict
+classifiers into the same helper. Their domain anchors are
+semantically different (Weather: train_rel relative to oracle
+ceiling; CAMELS: two-anchor with persistence + engineering bars).
+Forcing common framework would muddle the distinctions.
+
 ### Added (Stage 3.1 — workbench info-sufficiency calibration on all 11 systems)
 
 User direction (2026-05-28): begin Stage 3 calibration of
