@@ -59,6 +59,8 @@ from .losses import mse_loss
 from .scoring import _evaluate_tree
 from .pareto import pareto_front
 from .const_opt import optimize_constants, optimize_constants_jax
+from .const_snap import snap_constants
+from .decompose import power_law_seed
 from .hall_of_fame import HallOfFame
 
 # Tier 3 imports: optional; only used when cfg.use_jax_population_eval=True.
@@ -183,6 +185,43 @@ class GPConfig:
     optimize_constants_jax_lr: float = 1e-2
     """Adam learning rate for the 'jax_adam' optimiser (ignored
     otherwise). Tune up if losses plateau; down if they diverge."""
+
+    # Canonical-constant snapping (post-polish round-to-physical)
+    snap_constants_enabled: bool = False
+    """If True, after each `optimize_constants` polish, attempt to snap
+    each fitted scalar to the nearest canonical physical value (1/2,
+    1/(4·pi), sqrt(2), e, ...) within `snap_constants_rel_tol`.
+
+    Snap is gated on loss preservation: only accepted if the snapped
+    tree's loss is no worse than the polished tree's. Safe by
+    construction — never moves the Pareto front backwards.
+
+    Default OFF so the feature is an explicit opt-in (lets the A/B
+    runner toggle cleanly without behavior drift). See
+    `tessera.search.const_snap` for the candidate library and protocol.
+    """
+
+    snap_constants_rel_tol: float = 0.005
+    """Maximum relative distance from a snap candidate (default 0.5%)."""
+
+    # Decomposition pre-pass (structural symmetries before search)
+    decompose_prepass_enabled: bool = False
+    """If True, before the initial population is built, attempt to detect
+    multiplicative separability via log-log linear regression. On a
+    successful detection, the resulting C·∏x_i^{a_i} tree is injected
+    into the initial population as a seed candidate.
+
+    The seed is subject to normal selection — if it's wrong, it dies
+    naturally. The pre-pass adds at most one tree to the initial
+    population (no architectural change to search/scoring/selection).
+
+    Default OFF for clean A/B. See `tessera.search.decompose`.
+    """
+
+    decompose_prepass_r2_threshold: float = 0.99
+    """R² threshold for accepting the power-law fit. 0.99 = require
+    log-log regression to explain 99% of variance. Non-power-law
+    targets are rejected and the pre-pass is a no-op."""
 
     # Algebraic simplification
     simplify_trees: bool = True
@@ -425,7 +464,23 @@ class GP:
             self._env_jax = None
             self._y_true_jax = None
 
-        pop = self._init_population(feature_names, env, y_true)
+        # Decomposition pre-pass (optional): detect multiplicative
+        # separability and produce a seed tree for the initial
+        # population. Failures are silent (returns None tree).
+        seed_trees: list[Node] = []
+        if self.cfg.decompose_prepass_enabled:
+            seed_tree, fit = power_law_seed(
+                env, y_true,
+                r2_threshold=self.cfg.decompose_prepass_r2_threshold,
+            )
+            if seed_tree is not None:
+                if validate_tree(seed_tree, set(feature_names)) is None:
+                    seed_trees.append(seed_tree)
+                    if self.cfg.verbose:
+                        print(f"[gp] decompose pre-pass seeded: {fit}")
+
+        pop = self._init_population(feature_names, env, y_true,
+                                    seed_trees=seed_trees)
         self.hall_of_fame.update_many(pop)
         front = pareto_front(pop)
         best = min(pop, key=lambda c: c.fitness)
@@ -502,9 +557,16 @@ class GP:
 
     # ---- internals ----
 
-    def _init_population(self, feature_names, env, y_true):
-        # Collect valid trees first, then score in a batch
+    def _init_population(self, feature_names, env, y_true,
+                         seed_trees: list[Node] | None = None):
+        # Collect valid trees first, then score in a batch. Optional
+        # `seed_trees` are placed at the front of the population (e.g.,
+        # from the decompose pre-pass); random fills the remainder.
         trees: list[Node] = []
+        if seed_trees:
+            for st in seed_trees:
+                if validate_tree(st, set(feature_names)) is None:
+                    trees.append(st)
         attempts = 0
         max_attempts = self.cfg.pop_size * 10
         while len(trees) < self.cfg.pop_size and attempts < max_attempts:
@@ -738,6 +800,19 @@ class GP:
                     method=method,
                     maxiter=self.cfg.optimize_constants_maxiter,
                 )
+            # Optional snap pass: round fitted constants to canonical
+            # physical values (1/2, 1/(4π), √2, ...) if any are within
+            # `snap_constants_rel_tol` AND the snapped tree's loss is
+            # no worse than the polished tree's. See const_snap.py.
+            if self.cfg.snap_constants_enabled:
+                new_tree, new_loss, _snap_info = snap_constants(
+                    new_tree, env, y_true, self.loss_fn, self.cache,
+                    current_loss=new_loss,
+                    fill_warmup=self.cfg.fill_warmup,
+                    min_valid_frac=self.cfg.min_valid_frac,
+                    rel_tol=self.cfg.snap_constants_rel_tol,
+                )
+
             if new_loss < c.train_loss - 1e-12:
                 cx = complexity(new_tree)
                 fitness = new_loss + self._current_parsimony * cx
