@@ -46,7 +46,26 @@ dependencies = [
 sympy = ["sympy>=1.12"]
 pysr  = ["pysr>=1.0"]
 dev   = ["pytest>=7.0", "pytest-cov", "ruff", "mypy"]
-all   = ["sympy>=1.12", "pysr>=1.0"]
+# JAX backend — required for use_jax_population_eval, batched evaluation,
+# const_opt_jax, and the symbolic-network Colab GPU path. JAX CPU build
+# works locally; jaxlib needs CUDA wheels on the target system for GPU.
+jax   = ["jax>=0.4", "jaxlib>=0.4"]
+# Benchmark / notebook dependencies. None of these are needed for the
+# core tessera library; install with `pip install -e ".[benchmarks]"`
+# to run the benchmark scripts and notebooks.
+benchmarks = [
+  "scikit-learn>=1.3",   # MNIST loading via fetch_openml
+  "matplotlib>=3.7",     # notebook visualizations
+  "requests>=2.31",      # CAMELS / DAYMET HTTP API loaders
+  "netCDF4>=1.6",        # weather PDE NCEP reanalysis netcdf
+  "pyarrow>=14.0",       # CAMELS basin parquet cache
+]
+all   = [
+  "sympy>=1.12", "pysr>=1.0",
+  "scikit-learn>=1.3", "matplotlib>=3.7", "requests>=2.31",
+  "netCDF4>=1.6", "pyarrow>=14.0",
+  "jax>=0.4", "jaxlib>=0.4",
+]
 
 [project.urls]
 "Source"        = "https://github.com/davechendatascience/tessera"
