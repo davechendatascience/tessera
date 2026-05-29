@@ -591,9 +591,219 @@ def policy_search(X, y, cfg: Optional[PolicyConfig] = None,
                     info={"iters": cfg.iters, "pop": cfg.pop})
 
 
+# --------------------------------------------------------------------
+# Method D: structure search as a CSP — backtracking enumeration
+# (Knuth TAOCP Vol 4 Fascicle 7, §7.2.2.3)
+# --------------------------------------------------------------------
+# The structure search is a CSP: variables = (op, left, right) per node;
+# constraints = wiring validity, arity, CONNECTIVITY (root depends on
+# inputs), SYMMETRY-BREAKING (commutative ordering, dedup). We enumerate
+# canonical expression TREES by increasing size (iterative deepening):
+#   - connectivity is automatic (every tree node feeds the root),
+#   - symmetry-breaking via commutative child ordering + canonical-key
+#     dedup kills the redundant equivalents GP/CEM re-sample,
+#   - smallest-first = complete + parsimonious (finds the minimal program
+#     that fits, the conditional-guarantee the relaxation can't give).
+# Each enumerated skeleton's constants are refined in parallel on the GPU
+# (the shared `vrefine`). Deterministic: no restart lottery.
+
+_D_UNARY = ["neg", "square", "sqrt", "inv", "sin", "cos", "tanh"]
+_D_BINARY = ["add", "sub", "mul", "div"]
+_D_COMM = {"add", "mul"}
+
+
+@dataclass
+class CSPConfig:
+    op_names: List[str] = field(default_factory=lambda: list(DEFAULT_OPS))
+    max_size: int = 4            # max feature-tree size (operator nodes)
+    max_terms: int = 4           # OMP terms (sparsity of the linear fit)
+    max_features: int = 40000    # cap on the enumerated dictionary (logged)
+    seed: int = 0                # unused (D is deterministic); kept for API
+
+
+def _tree_key(t):
+    if t[0] == "var":
+        return f"v{t[1]}"
+    if len(t) == 2:
+        return f"{t[0]}({_tree_key(t[1])})"
+    return f"{t[0]}({_tree_key(t[1])},{_tree_key(t[2])})"
+
+
+def _gen_trees(size, d, memo):
+    """All canonical distinct CONSTANT-FREE expression trees with exactly
+    `size` operator nodes (leaves = variables only; symmetry-broken:
+    commutative children ordered, dups removed). Constants enter later as
+    LINEAR coefficients, not as leaves — so there is no gradient descent."""
+    if size in memo:
+        return memo[size]
+    out, seen = [], set()
+
+    def add(t):
+        k = _tree_key(t)
+        if k not in seen:
+            seen.add(k); out.append(t)
+
+    if size == 0:
+        for j in range(d):
+            add(("var", j))
+        memo[size] = out
+        return out
+    for op in _D_UNARY:
+        for c in _gen_trees(size - 1, d, memo):
+            add((op, c))
+    for op in _D_BINARY:
+        for ls in range(size):
+            L = _gen_trees(ls, d, memo)
+            R = _gen_trees(size - 1 - ls, d, memo)
+            comm = op in _D_COMM
+            for cl in L:
+                kl = _tree_key(cl)
+                for cr in R:
+                    if comm and kl > _tree_key(cr):
+                        continue           # symmetry-break commutative ops
+                    add((op, cl, cr))
+    memo[size] = out
+    return out
+
+
+def _render_tree(t):
+    if t[0] == "var":
+        return f"x{t[1]}"
+    if len(t) == 2:
+        return f"{t[0]}({_render_tree(t[1])})"
+    return f"{t[0]}({_render_tree(t[1])}, {_render_tree(t[2])})"
+
+
+def _tree_size(t):
+    if t[0] == "var":
+        return 0
+    if len(t) == 2:
+        return 1 + _tree_size(t[1])
+    return 1 + _tree_size(t[1]) + _tree_size(t[2])
+
+
+# Numpy feature evaluators (smooth surrogates, matching make_ops). Feature
+# evaluation is pure numpy: no JAX compile, no gradient descent — the whole
+# point of Method D's revision.
+def _np_div(a, b):
+    return a * b / (b * b + 1e-6)
+
+
+_NP_UNARY = {
+    "neg": lambda x: -x, "square": lambda x: x * x,
+    "sqrt": lambda x: np.sqrt(np.abs(x) + 1e-6),
+    "inv": lambda x: x / (x * x + 1e-6),
+    "sin": np.sin, "cos": np.cos, "tanh": np.tanh,
+}
+_NP_BINARY = {
+    "add": lambda a, b: a + b, "sub": lambda a, b: a - b,
+    "mul": lambda a, b: a * b, "div": _np_div,
+}
+
+
+def _np_eval(t, X):
+    if t[0] == "var":
+        return X[:, t[1]]
+    if len(t) == 2:
+        return _NP_UNARY[t[0]](_np_eval(t[1], X))
+    return _NP_BINARY[t[0]](_np_eval(t[1], X), _np_eval(t[2], X))
+
+
+def _omp(Phi, y, sizes, max_terms, recover_thresh):
+    """Orthogonal matching pursuit: greedily add the feature most
+    correlated with the residual (with a small parsimony tie-break that
+    prefers the SMALLEST feature among near-equal correlations), refit by
+    closed-form least squares, repeat. No gradient descent — the residual-
+    guided selection IS the fit feeding back into the search."""
+    N, F = Phi.shape
+    ones = np.ones((N, 1))
+    ybar = float(y.mean())
+    ss_tot = float(np.sum((y - ybar) ** 2)) + 1e-30
+    Phic = Phi - Phi.mean(axis=0, keepdims=True)
+    norms = np.linalg.norm(Phic, axis=0) + 1e-12
+    sizes = np.asarray(sizes, dtype=np.float64)
+    selected, coef, intercept = [], np.zeros(0), ybar
+    r = y - ybar
+    best_r2 = 0.0
+    for _ in range(max_terms):
+        rn = np.linalg.norm(r) + 1e-12
+        rho = np.abs(Phic.T @ r) / (norms * rn)      # normalized corr in [0,1]
+        scores = rho - 1e-4 * sizes                  # parsimony tie-break
+        if selected:
+            scores[selected] = -1e9
+        k = int(np.argmax(scores))
+        trial = selected + [k]
+        A = np.hstack([ones, Phi[:, trial]])
+        c, *_ = np.linalg.lstsq(A, y, rcond=None)
+        r_new = y - A @ c
+        r2 = 1.0 - float(np.sum(r_new ** 2)) / ss_tot
+        if r2 <= best_r2 + 1e-9 and selected:
+            break                            # no improvement
+        selected, coef, intercept, r, best_r2 = trial, c[1:], float(c[0]), r_new, r2
+        if best_r2 > recover_thresh:
+            break
+    return selected, coef, intercept, best_r2
+
+
+def csp_search(X, y, cfg: Optional[CSPConfig] = None,
+               recover_thresh: float = 0.9999, log=lambda s: None) -> SRResult:
+    """Method D: CSP-enumerated feature dictionary + sparse LINEAR fit.
+
+    The CSP enumerates constant-free feature trees (the dictionary); the
+    coefficients are fit by orthogonal matching pursuit (closed-form least
+    squares per step). Gradient-free, no JAX, no iterative refinement —
+    the design matrix `Phi` IS the 'weights compressed onto one structure',
+    solved once. Returns the sparse linear combination of features that
+    fits. Constants buried inside nonlinearities (e.g. sin(c·x), irrational
+    c) are the known limit; a 1-step Gauss-Newton refine on the selected
+    feature is the cheap extension (not needed for linear-in-params forms).
+    """
+    cfg = cfg or CSPConfig()
+    d = X.shape[1]; K = cfg.max_size
+    X = np.asarray(X, np.float64); y = np.asarray(y, np.float64)
+
+    # ---- enumerate the const-free feature dictionary (smallest first) ----
+    memo = {}
+    feats, cols, sizes, seen_cols = [], [], [], set()
+    for size in range(0, K + 1):
+        for t in _gen_trees(size, d, memo):
+            col = _np_eval(t, X).astype(np.float64)
+            if not np.all(np.isfinite(col)) or float(np.std(col)) < 1e-9:
+                continue                       # drop NaN/inf and constants
+            key = hash(np.round(col, 6).tobytes())
+            if key in seen_cols:
+                continue                       # numerical dedup (e.g. neg(neg))
+            seen_cols.add(key)
+            feats.append(t); cols.append(col); sizes.append(_tree_size(t))
+            if len(feats) >= cfg.max_features:
+                log(f"feature cap {cfg.max_features} hit at size {size}")
+                break
+        if len(feats) >= cfg.max_features:
+            break
+    Phi = np.stack(cols, axis=1)               # (N, F) design matrix
+    log(f"dictionary: {Phi.shape[1]} features (sizes 0..{K})")
+
+    # ---- sparse linear fit (OMP), gradient-free ----
+    selected, coef, intercept, r2 = _omp(Phi, y, sizes, cfg.max_terms, recover_thresh)
+
+    # ---- render ----
+    parts = []
+    if abs(intercept) > 1e-3:
+        parts.append(f"{intercept:.4g}")
+    for c, k in zip(coef, selected):
+        if abs(c) < 1e-6:
+            continue
+        fr = _render_tree(feats[k])
+        parts.append(fr if abs(c - 1.0) < 1e-3 else f"{c:.4g}*{fr}")
+    expr = " + ".join(parts) if parts else "0"
+    return SRResult(method="D:csp+lstsq", expr=expr, r2=r2,
+                    recovered=r2 > recover_thresh, evals=Phi.shape[1],
+                    info={"max_size": K, "n_terms": len(selected)})
+
+
 __all__ = [
     "make_ops", "make_core_eval", "make_refiner", "render", "r2_of",
     "SRResult", "target_suite", "EvoConfig", "evo_search",
     "RelaxConfig", "relax_search", "PolicyConfig", "policy_search",
-    "DEFAULT_OPS",
+    "CSPConfig", "csp_search", "DEFAULT_OPS",
 ]
