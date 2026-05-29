@@ -1,69 +1,57 @@
-"""Symbolic network for image classification (Milestone A scaffold).
+"""Symbolic network for image classification.
 
-Provenance: `docs/research/hybrid_symbolic_networks.md` Milestone A.
+Provenance: `docs/research/hybrid_symbolic_networks.md` Milestone A → C.
 
-Status: **UNTESTED**. Milestone-A MVP — first cut of the
-SymbolicNetwork architecture, network-aware GP loop, and a
-binary-classification fitness path. All choices are the simplest
-possible per the milestone scope:
+Architecture (current)
+----------------------
+A 2-layer symbolic network for N-class classification:
 
-- Hardcoded 2-layer architecture (K layer-1 trees + 1 layer-2 tree)
-- Binary classification (2-class)
-- Layer-1 trees: image → array, mean-pooled to scalar (matches the
-  existing single-tree MNIST benchmark convention)
-- Layer-2 tree: K scalar features → 1 scalar score
-- Mutation: pick one of (K+1) slots, mutate that tree
-- Crossover: swap one slot between two networks
-- Tournament selection + (μ + λ) survival
+- Layer 1: K trees, each maps the input channels → a 2-D field, then
+  region-pooled (`n_regions` block means) to scalar features.
+- Layer 2: N trees (one per class), each maps the K·n_regions pooled
+  features → a class score. softmax + argmax → prediction.
+- Search: tournament selection + (μ+λ) survival, per-slot mutation,
+  per-slot crossover. Cross-entropy loss + parsimony.
+- Optional JAX-vmapped JIT evaluation (`use_jax_eval`).
 
-Graduation criterion
---------------------
-On MNIST digit 0 vs digit 1: TEST accuracy > 0.95. The existing
-single-tree benchmark hit TEST 0.80 on 0-vs-rest (a harder task);
-the K-network on the easier 2-class problem should comfortably beat
-this if the architecture is workable. If it doesn't, either K is too
-small, the GP can't navigate network-space, or the mean-pool
-aggregation is too lossy.
+Input channels (multi-channel inputs)
+-------------------------------------
+Layer-1 trees reference NAMED input channels, not just a single
+"image" variable. The default is a single channel `("image",)`, which
+reproduces the original behaviour exactly (backwards compatible).
 
-Removal criterion
------------------
-TEST acc ≤ baseline (0.80) even with K=8 and longer search budgets.
-Then the compositional structure isn't helping at this scale and the
-direction needs different infrastructure.
+For image tasks where global+pointwise features are too weak (e.g.
+10-class MNIST), supply a richer channel bank — e.g.
+`("image", "gx", "gy", "lap")` — precomputed once via
+`make_image_channels`. Layer-1 trees can then compose edge / gradient /
+curvature maps (`abs(gx)+abs(gy)` pooled per quadrant = "edge density
+in region"), which pointwise-of-raw-pixels cannot express. This is the
+expressivity fix for the MNIST plateau, kept fully JAX-compatible
+because the channels are precomputed numpy arrays fed as ordinary Var
+inputs.
 
-Initial commit: 2026-05-29
-Last evaluation: never
+The mechanism is domain-agnostic: any task expressible as a set of
+named 2-D channels works. It is *separate* from the Feynman / tabular
+SR path (`tessera.search.GP`), which this module does not touch — the
+conceptual parallel (precompute derived inputs) is the same idea the
+decompose prepass uses for Feynman, but the code paths are independent.
 
-What this module provides
--------------------------
+Status: experimental. Binary MNIST 0-vs-1 with quadrant pooling
+reaches TEST 0.968. Direct 10-class is the open problem the channel
+bank targets. See `hybrid_symbolic_networks.md` for milestone status.
 
-    SymbolicNetwork
-        Frozen dataclass holding K layer-1 trees + 1 layer-2 tree.
+Key entry points
+----------------
+    SymbolicNetwork              — frozen dataclass (K L1 + N L2 trees)
+    make_image_channels(images)  — precompute (image, gx, gy, lap) bank
+    random_network(rng, ...)     — construct a random network
+    mutate_network / crossover_networks
+    network_loss / network_accuracy
+    NetworkGPConfig + run_network_gp(...)
 
-    evaluate_network(network, image) -> float
-        Score one image.
-
-    evaluate_network_batch(network, images) -> np.ndarray
-        Score a batch of images. Returns N scores.
-
-    random_network(rng, K, ...) -> SymbolicNetwork
-        Construct a random network.
-
-    mutate_network(network, rng) -> SymbolicNetwork
-        Pick one slot, mutate that tree, return new network.
-
-    crossover_networks(a, b, rng) -> SymbolicNetwork
-        Swap one slot between a and b.
-
-    network_loss(network, images, labels, parsimony) -> float
-        MSE(sigmoid(scores), labels) + parsimony · total_complexity.
-
-    network_accuracy(network, images, labels) -> float
-        Threshold scores at 0; compare to labels.
-
-    NetworkGPConfig (dataclass)
-    run_network_gp(images_train, labels_train, cfg, images_test, labels_test)
-        -> (best_candidate, history)
+Both `images_*` arguments to run_network_gp / the eval functions accept
+either a bare (N,H,W) array (auto-wrapped or auto-expanded to the
+configured channel bank) or a precomputed dict {name: (N,H,W)}.
 """
 from __future__ import annotations
 
@@ -82,6 +70,100 @@ from tessera.expression.mutation import (
 )
 from tessera.expression.simplify import simplify
 from tessera.expression.jit import is_pure_pointwise
+
+
+# ---------------------------------------------------------------------
+# Input channels — derived 2-D feature maps fed to layer-1 trees
+# ---------------------------------------------------------------------
+
+DEFAULT_IMAGE_CHANNELS: tuple[str, ...] = ("image", "gx", "gy", "lap")
+"""Recommended channel bank for image classification. `gx`/`gy` are
+central-difference spatial gradients (vertical / horizontal edges);
+`lap` is the 5-point Laplacian (curvature / blob structure). Together
+with the raw `image`, these give layer-1 trees genuine spatial
+primitives, which pointwise-of-raw-pixels lacks."""
+
+
+def make_image_channels(
+    images: np.ndarray,
+    channels: tuple[str, ...] = DEFAULT_IMAGE_CHANNELS,
+) -> dict[str, np.ndarray]:
+    """Precompute named spatial channels for a batch (or single) image.
+
+    Parameters
+    ----------
+    images : np.ndarray
+        Shape (N, H, W) for a batch, or (H, W) for a single image.
+    channels : tuple[str, ...]
+        Which channels to compute. Supported:
+          "image" — raw pixels (copy)
+          "gx"    — central horizontal difference (vertical-edge map)
+          "gy"    — central vertical difference (horizontal-edge map)
+          "lap"   — 5-point Laplacian (curvature / blobs)
+
+    Returns
+    -------
+    dict[name -> array] with each array the same shape as `images`.
+    All ops are simple vectorized numpy shifts (no scipy dependency,
+    no GP-loop cost — computed once on the dataset).
+    """
+    arr = np.asarray(images, dtype=np.float64)
+    single = (arr.ndim == 2)
+    if single:
+        arr = arr[None]  # (1, H, W)
+
+    out: dict[str, np.ndarray] = {}
+    for name in channels:
+        if name == "image":
+            out[name] = arr.copy()
+        elif name == "gx":
+            g = np.zeros_like(arr)
+            g[:, :, 1:-1] = arr[:, :, 2:] - arr[:, :, :-2]
+            out[name] = g
+        elif name == "gy":
+            g = np.zeros_like(arr)
+            g[:, 1:-1, :] = arr[:, 2:, :] - arr[:, :-2, :]
+            out[name] = g
+        elif name == "lap":
+            g = np.zeros_like(arr)
+            g[:, 1:-1, 1:-1] = (
+                arr[:, 1:-1, 2:] + arr[:, 1:-1, :-2]
+                + arr[:, 2:, 1:-1] + arr[:, :-2, 1:-1]
+                - 4.0 * arr[:, 1:-1, 1:-1]
+            )
+            out[name] = g
+        else:
+            raise ValueError(f"make_image_channels: unknown channel {name!r}")
+
+    if single:
+        out = {k: v[0] for k, v in out.items()}
+    return out
+
+
+def _prepare_channels(data, channel_names: tuple[str, ...]) -> dict:
+    """Normalize an eval input to a {name: array} dict over channel_names.
+
+    - dict in → returned as-is (assumed already correct; GP hot loop
+      passes the precomputed dict, so this is a no-op passthrough).
+    - bare ndarray + single "image" channel → wrap as {"image": arr}.
+    - bare ndarray + multi-channel → auto-compute the bank via
+      make_image_channels (ergonomic: pass raw images, get channels).
+    """
+    if isinstance(data, dict):
+        return data
+    if tuple(channel_names) == ("image",):
+        return {"image": np.asarray(data, dtype=np.float64)}
+    return make_image_channels(data, channels=tuple(channel_names))
+
+
+def _single_channels(channels: dict, i: int) -> dict:
+    """Slice the i-th sample out of a batched channel dict."""
+    return {name: channels[name][i] for name in channels}
+
+
+def _batch_size(channels: dict) -> int:
+    any_name = next(iter(channels))
+    return channels[any_name].shape[0]
 
 
 # ---------------------------------------------------------------------
@@ -120,23 +202,24 @@ def _jax_available() -> bool:
 _JAX_TREE_CACHE: dict = {}
 
 
-def _compile_image_tree_jax(tree: Node, n_regions: int = 1):
+def _compile_image_tree_jax(tree: Node, channel_names: tuple[str, ...],
+                            n_regions: int = 1):
     """Compile a layer-1 tree to a JIT'd batched function:
-       fn(images_batch, consts) -> features_batch
+       fn(channel_stack, consts) -> features_batch
 
-    images_batch: shape (N, H, W).
+    channel_stack: shape (N, C, H, W) — C = len(channel_names), in
+        channel_names order.
     consts: 1-D array of Const values in pre-order.
     features_batch: shape (N, n_regions) — region-pooled features per image.
 
-    For n_regions=1, this is the classic global mean-pool returning shape
-    (N, 1). For n_regions=4, returns 4 per-quadrant means → shape (N, 4).
-    Any perfect-square n_regions is supported.
+    For n_regions=1, classic global mean-pool → (N, 1). For n_regions=4,
+    4 per-quadrant means → (N, 4). Any perfect-square n_regions.
 
     Returns None if the tree contains FunctionalOp / FunctionalOp2D
     (not supported by the per-tree JIT path).
 
-    Cache key includes n_regions so different pooling resolutions get
-    their own JIT.
+    Cache key includes channel_names + n_regions so distinct channel
+    sets / pooling resolutions get their own JIT.
     """
     if not is_pure_pointwise(tree):
         return None
@@ -150,16 +233,20 @@ def _compile_image_tree_jax(tree: Node, n_regions: int = 1):
     if side * side != n_regions:
         raise ValueError(f"n_regions must be a perfect square; got {n_regions}")
 
-    key = (topology_key(tree), ("image",), f"image_pool_{n_regions}")
+    channel_names = tuple(channel_names)
+    C = len(channel_names)
+    key = (topology_key(tree), channel_names, f"image_pool_{n_regions}")
     if key in _JAX_TREE_CACHE:
         return _JAX_TREE_CACHE[key]
 
-    var_idx = {"image": 0}
+    var_idx = {name: i for i, name in enumerate(channel_names)}
     counter = [0]
     raw_fn = _build_parametric_fn(tree, var_idx, counter)
 
-    def _per_image(image, consts):
-        out = raw_fn((image,), consts)
+    def _per_sample(chan_stack, consts):
+        # chan_stack: (C, H, W). Args ordered by channel_names.
+        args = tuple(chan_stack[i] for i in range(C))
+        out = raw_fn(args, consts)
         out = jnp.asarray(out)
         # Handle scalar output: broadcast to n_regions
         if out.ndim == 0:
@@ -174,7 +261,7 @@ def _compile_image_tree_jax(tree: Node, n_regions: int = 1):
         blocked = cropped.reshape(side, h_step, side, w_step)
         return jnp.mean(blocked, axis=(1, 3)).flatten()
 
-    vmapped = jax.vmap(_per_image, in_axes=(0, None))
+    vmapped = jax.vmap(_per_sample, in_axes=(0, None))
     jitted = jax.jit(vmapped)
     _JAX_TREE_CACHE[key] = jitted
     return jitted
@@ -217,28 +304,36 @@ def _compile_feature_tree_jax(tree: Node, K: int):
 
 
 def evaluate_network_jax_batch(
-    network: "SymbolicNetwork", images: np.ndarray,
+    network: "SymbolicNetwork", data,
 ) -> Optional[np.ndarray]:
     """JAX batched evaluation. Returns scores of shape (N, n_classes)
     as numpy array, or None if any tree in the network has FunctionalOp
     / 2D (caller should fall back to numpy).
+
+    `data` is a bare (N,H,W) array or a {channel: (N,H,W)} dict.
     """
     if not _jax_available():
         return None
     from tessera.expression.batched import extract_constants
     import jax.numpy as jnp
 
-    images_j = jnp.asarray(images)
+    channel_names = network.input_channels
+    channels = _prepare_channels(data, channel_names)
+    # Stack channels in input_channels order → (N, C, H, W)
+    stacked = jnp.stack(
+        [jnp.asarray(channels[name]) for name in channel_names], axis=1
+    )
 
     feature_cols = []
     for tree in network.layer_1_trees:
-        fn = _compile_image_tree_jax(tree, n_regions=network.n_regions)
+        fn = _compile_image_tree_jax(tree, channel_names,
+                                     n_regions=network.n_regions)
         if fn is None:
             return None
         consts_list = extract_constants(tree)
-        consts = (jnp.asarray(consts_list, dtype=images_j.dtype)
-                  if consts_list else jnp.zeros(0, dtype=images_j.dtype))
-        feats = fn(images_j, consts)  # shape (N, n_regions)
+        consts = (jnp.asarray(consts_list, dtype=stacked.dtype)
+                  if consts_list else jnp.zeros(0, dtype=stacked.dtype))
+        feats = fn(stacked, consts)  # shape (N, n_regions)
         feature_cols.append(feats)
     # Concat along feature axis: (N, K * n_regions)
     features_matrix = jnp.concatenate(feature_cols, axis=1)
@@ -250,8 +345,8 @@ def evaluate_network_jax_batch(
         if l2_fn is None:
             return None
         l2_consts_list = extract_constants(tree)
-        l2_consts = (jnp.asarray(l2_consts_list, dtype=images_j.dtype)
-                     if l2_consts_list else jnp.zeros(0, dtype=images_j.dtype))
+        l2_consts = (jnp.asarray(l2_consts_list, dtype=stacked.dtype)
+                     if l2_consts_list else jnp.zeros(0, dtype=stacked.dtype))
         sc = l2_fn(features_matrix, l2_consts)  # shape (N,)
         score_cols.append(sc)
     scores = jnp.stack(score_cols, axis=1)  # shape (N, n_classes)
@@ -299,6 +394,7 @@ class SymbolicNetwork:
     layer_1_trees: tuple[Node, ...]
     layer_2_trees: tuple[Node, ...]   # one per class; len = n_classes
     n_regions: int = 1                 # pooling resolution; backwards-compat default
+    input_channels: tuple[str, ...] = ("image",)  # named layer-1 inputs
 
     @property
     def K(self) -> int:
@@ -324,8 +420,10 @@ class SymbolicNetwork:
         l2 = "\n    ".join(f"class_{c} = {t}" for c, t in enumerate(self.layer_2_trees))
         return (f"SymbolicNetwork(K={self.K}, n_regions={self.n_regions}, "
                 f"n_classes={self.n_classes}, "
-                f"n_features={self.n_features}, cx={self.complexity}):\n"
-                f"  Layer 1 (each → {self.n_regions} pooled features):\n    {l1}\n"
+                f"n_features={self.n_features}, "
+                f"channels={self.input_channels}, cx={self.complexity}):\n"
+                f"  Layer 1 (inputs {self.input_channels} → {self.n_regions} "
+                f"pooled features each):\n    {l1}\n"
                 f"  Layer 2 (one tree per class, takes {self.n_features} features):\n    {l2}")
 
 
@@ -375,18 +473,23 @@ def _pool_regions_np(arr: np.ndarray, n_regions: int) -> np.ndarray:
     return pooled.astype(np.float64)
 
 
-def evaluate_network(network: SymbolicNetwork, image: np.ndarray) -> np.ndarray:
+def evaluate_network(network: SymbolicNetwork, data) -> np.ndarray:
     """Score one image; returns array of shape (n_classes,).
 
-    Layer-1 trees are evaluated on the image, then pooled to
-    n_regions scalar features each. Layer-2 trees see K · n_regions
-    named features f0..f_{K·n_regions − 1}.
+    `data` is a single-image channel dict {name: (H,W)} or a bare (H,W)
+    array (auto-prepared to the network's channels). Layer-1 trees are
+    evaluated on the channels, region-pooled, then layer-2 trees produce
+    per-class scores.
     """
+    channels = _prepare_channels(data, network.input_channels)
+    env = {name: np.asarray(channels[name], dtype=np.float64)
+           for name in network.input_channels}
+
     features: list[float] = []
     n_regions = network.n_regions
     for tree in network.layer_1_trees:
         try:
-            out = evaluate(tree, {"image": image}, fill_warmup=0.0)
+            out = evaluate(tree, env, fill_warmup=0.0)
             out = np.asarray(out, dtype=np.float64)
             pooled = _pool_regions_np(out, n_regions)
         except Exception:
@@ -408,13 +511,18 @@ def evaluate_network(network: SymbolicNetwork, image: np.ndarray) -> np.ndarray:
 
 
 def evaluate_network_batch(
-    network: SymbolicNetwork, images: np.ndarray,
+    network: SymbolicNetwork, data,
 ) -> np.ndarray:
-    """Evaluate on N images. Returns shape (N, n_classes)."""
-    n = images.shape[0]
+    """Evaluate on N images. Returns shape (N, n_classes).
+
+    `data` is a batched channel dict {name: (N,H,W)} or a bare (N,H,W)
+    array (auto-prepared to the network's channels).
+    """
+    channels = _prepare_channels(data, network.input_channels)
+    n = _batch_size(channels)
     out = np.zeros((n, network.n_classes), dtype=np.float64)
     for i in range(n):
-        out[i] = evaluate_network(network, images[i])
+        out[i] = evaluate_network(network, _single_channels(channels, i))
     return out
 
 
@@ -437,46 +545,41 @@ def random_network(
     K: int = 4,
     n_classes: int = 2,
     n_regions: int = 1,
+    input_channels: tuple[str, ...] = ("image",),
     layer_1_max_depth: int = 3,
     layer_2_max_depth: int = 3,
     enable_2d: bool = True,
     max_attempts_per_slot: int = 30,
     seed_layer_2_sum: bool = True,
 ) -> SymbolicNetwork:
-    """Construct a random K-feature network.
+    """Construct a random K-feature network over the given input channels.
 
-    Layer-1 trees use a restricted alphabet for non-degenerate image
-    features:
+    Layer-1 trees reference the named `input_channels` (default just
+    "image") and use a restricted alphabet for non-degenerate features:
     - pointwise + Measure2D (if enable_2d) for spatial structure
-    - 1D FunctionalOp (L[], V2[], B[]) is DISABLED — these expect
-      1D time-series, not 2D image fields; applying them to images
-      produces degenerate (constant or NaN) outputs
-    - reduce_* operators are FILTERED OUT — they collapse the whole
-      image to a scalar that's barely image-dependent
+    - 1D FunctionalOp (L[], V2[], B[]) DISABLED — they expect 1D
+      time-series, not 2D fields; degenerate on images
+    - reduce_* operators FILTERED OUT — collapse the field to a scalar
 
-    Layer-2 trees use a pointwise-only alphabet over the K scalar
-    features f0..f{K-1}. By default the FIRST candidate is the sum
-    `f0 + f1 + ... + f_{K-1}` (a known non-degenerate combination
-    that uses all features). The GP refines from there. This is the
-    detect-then-seed pattern at the within-network init level —
-    instead of starting from a likely-degenerate random tree, start
-    from a tree that actually consumes the features.
+    With a multi-channel bank (e.g. image/gx/gy/lap), a layer-1 tree
+    like `abs(gx) + abs(gy)` becomes an edge-density feature — the
+    expressivity the single-"image" channel lacks.
 
-    Failures to generate a valid layer-1 tree fall back to Var("image").
+    Layer-2 trees use a pointwise-only alphabet over the K·n_regions
+    pooled features f0..f{K·n_regions − 1}. Seeding: see inline comments.
+
+    Failures to generate a valid layer-1 tree fall back to the first
+    channel as a bare Var.
     """
     # Layer 1
-    l1_features = ["image"]
+    l1_features = list(input_channels)
     l1_feature_set = set(l1_features)
+    fallback_l1 = Var(l1_features[0])
     l1_trees: list[Node] = []
     for _ in range(K):
         chosen: Optional[Node] = None
         for _ in range(max_attempts_per_slot):
             try:
-                # pointwise_only=False with enable_2d=True allows 2D
-                # Measure but NOT 1D FunctionalOp. (random_tree's
-                # default behavior splits these.)
-                # Actually we use pointwise_only=True + enable_2d as
-                # a separate signal — see filter below.
                 t = random_tree(rng, l1_features, max_depth=layer_1_max_depth,
                                 enable_2d=enable_2d,
                                 pointwise_only=True)
@@ -485,12 +588,12 @@ def random_network(
             if validate_tree(t, l1_feature_set) is not None:
                 continue
             if _tree_uses_reduce(t):
-                # Disallow reduce_* — collapses image to scalar.
+                # Disallow reduce_* — collapses field to scalar.
                 continue
             chosen = t
             break
         if chosen is None:
-            chosen = Var("image")
+            chosen = fallback_l1
         try:
             chosen = simplify(chosen)
         except Exception:
@@ -549,6 +652,7 @@ def random_network(
         layer_1_trees=tuple(l1_trees),
         layer_2_trees=tuple(l2_trees),
         n_regions=n_regions,
+        input_channels=tuple(input_channels),
     )
 
 
@@ -570,10 +674,11 @@ def mutate_network(
 
     if slot < network.K:
         parent = network.layer_1_trees[slot]
+        channel_list = list(network.input_channels)
         for _ in range(5):
             try:
                 new_tree = tree_mutate(
-                    [parent], rng, ["image"],
+                    [parent], rng, channel_list,
                     pointwise_only=True,
                     enable_2d=enable_2d,
                 )
@@ -593,6 +698,7 @@ def mutate_network(
             layer_1_trees=tuple(new_l1),
             layer_2_trees=network.layer_2_trees,
             n_regions=network.n_regions,
+            input_channels=network.input_channels,
         )
 
     # Layer-2 slot: 0..n_classes-1
@@ -618,6 +724,7 @@ def mutate_network(
         layer_1_trees=network.layer_1_trees,
         layer_2_trees=tuple(new_l2),
         n_regions=network.n_regions,
+        input_channels=network.input_channels,
     )
 
 
@@ -640,6 +747,7 @@ def crossover_networks(
             layer_1_trees=tuple(new_l1),
             layer_2_trees=a.layer_2_trees,
             n_regions=a.n_regions,
+            input_channels=a.input_channels,
         )
     class_idx = slot - a.K
     new_l2 = list(a.layer_2_trees)
@@ -648,6 +756,7 @@ def crossover_networks(
         layer_1_trees=a.layer_1_trees,
         layer_2_trees=tuple(new_l2),
         n_regions=a.n_regions,
+        input_channels=a.input_channels,
     )
 
 
@@ -676,16 +785,23 @@ def _scores(network: SymbolicNetwork, images: np.ndarray,
 
 def network_loss(
     network: SymbolicNetwork,
-    images: np.ndarray, labels: np.ndarray,
+    images, labels: np.ndarray,
     *, parsimony: float = 0.001, use_jax: bool = False,
+    complexity_divisor: float = 1.0,
 ) -> float:
-    """Cross-entropy loss (mean over samples) + parsimony · total_complexity.
+    """Cross-entropy loss (mean over samples) + parsimony penalty.
 
     For each sample i with true class y_i:
         loss_i = -log_softmax(scores[i])[y_i]
 
+    Penalty = parsimony · (total_complexity / complexity_divisor).
+    complexity_divisor=1.0 (default) preserves the original behaviour.
+    Set it to n_classes (via NetworkGPConfig.normalize_parsimony_by_classes)
+    so the per-class complexity penalty doesn't grow with the number of
+    layer-2 trees — important for multi-class where total cx scales with
+    n_classes and would otherwise over-penalize relative to binary.
+
     Returns +inf on non-finite scores (selection drops broken candidates).
-    Binary case (n_classes=2) is just the special case of softmax over 2 logits.
     """
     scores = _scores(network, images, use_jax=use_jax)
     if not np.isfinite(scores).all():
@@ -694,12 +810,13 @@ def network_loss(
     n = scores.shape[0]
     true_log_probs = log_probs[np.arange(n), labels.astype(int)]
     ce = float(-np.mean(true_log_probs))
-    return ce + parsimony * network.complexity
+    penalty = parsimony * (network.complexity / max(complexity_divisor, 1e-9))
+    return ce + penalty
 
 
 def network_accuracy(
     network: SymbolicNetwork,
-    images: np.ndarray, labels: np.ndarray,
+    images, labels: np.ndarray,
     *, use_jax: bool = False,
 ) -> float:
     """argmax(scores) vs labels."""
@@ -726,10 +843,13 @@ class NetworkGPConfig:
     K: int = 4
     n_classes: int = 2    # binary by default; set to N for N-class
     n_regions: int = 4    # spatial pooling resolution (1=global mean, 4=quadrants, 9=3x3)
+    input_channels: tuple[str, ...] = ("image",)  # layer-1 named inputs;
+        # use ("image","gx","gy","lap") for spatial edge/curvature features
     layer_1_max_depth: int = 3
     layer_2_max_depth: int = 3
     enable_2d: bool = True
     parsimony: float = 0.001
+    normalize_parsimony_by_classes: bool = False  # divide cx penalty by n_classes
     tournament_size: int = 3
     crossover_rate: float = 0.3
     mutation_rate: float = 0.7   # ignored; kept for symmetry
@@ -759,18 +879,29 @@ def run_network_gp(
         print("[gp] use_jax_eval=True requested but JAX not installed; "
               "falling back to numpy.")
 
+    # Prepare channels ONCE (auto-computes the spatial bank if the config
+    # asks for multi-channel inputs but raw images are passed). The hot
+    # loop then re-uses these dicts (no per-eval recompute).
+    train_ch = _prepare_channels(images_train, cfg.input_channels)
+    test_ch = (_prepare_channels(images_test, cfg.input_channels)
+               if images_test is not None else None)
+
+    cdiv = float(cfg.n_classes) if cfg.normalize_parsimony_by_classes else 1.0
+
     # Initialize.
     pop: list[NetworkCandidate] = []
     while len(pop) < cfg.pop_size:
         net = random_network(
             rng, K=cfg.K, n_classes=cfg.n_classes, n_regions=cfg.n_regions,
+            input_channels=cfg.input_channels,
             layer_1_max_depth=cfg.layer_1_max_depth,
             layer_2_max_depth=cfg.layer_2_max_depth,
             enable_2d=cfg.enable_2d,
         )
-        loss = network_loss(net, images_train, labels_train,
-                            parsimony=cfg.parsimony, use_jax=use_jax)
-        acc = network_accuracy(net, images_train, labels_train, use_jax=use_jax)
+        loss = network_loss(net, train_ch, labels_train,
+                            parsimony=cfg.parsimony, use_jax=use_jax,
+                            complexity_divisor=cdiv)
+        acc = network_accuracy(net, train_ch, labels_train, use_jax=use_jax)
         pop.append(NetworkCandidate(network=net, loss=loss, accuracy=acc))
 
     best_ever = min(pop, key=lambda c: c.loss)
@@ -789,9 +920,10 @@ def run_network_gp(
             else:
                 child = mutate_network(a.network, rng,
                                        enable_2d=cfg.enable_2d)
-            loss = network_loss(child, images_train, labels_train,
-                                parsimony=cfg.parsimony, use_jax=use_jax)
-            acc = network_accuracy(child, images_train, labels_train,
+            loss = network_loss(child, train_ch, labels_train,
+                                parsimony=cfg.parsimony, use_jax=use_jax,
+                                complexity_divisor=cdiv)
+            acc = network_accuracy(child, train_ch, labels_train,
                                     use_jax=use_jax)
             offspring.append(NetworkCandidate(network=child, loss=loss,
                                               accuracy=acc))
@@ -808,8 +940,8 @@ def run_network_gp(
             gens_no_improve += 1
 
         test_acc = float("nan")
-        if images_test is not None and labels_test is not None:
-            test_acc = network_accuracy(best.network, images_test, labels_test,
+        if test_ch is not None and labels_test is not None:
+            test_acc = network_accuracy(best.network, test_ch, labels_test,
                                          use_jax=use_jax)
 
         mean_loss = float(np.mean([c.loss for c in pop
@@ -843,6 +975,8 @@ __all__ = [
     "SymbolicNetwork",
     "NetworkCandidate",
     "NetworkGPConfig",
+    "DEFAULT_IMAGE_CHANNELS",
+    "make_image_channels",
     "evaluate_network",
     "evaluate_network_batch",
     "evaluate_network_jax_batch",

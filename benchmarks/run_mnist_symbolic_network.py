@@ -85,6 +85,13 @@ def main(argv=None) -> int:
     p.add_argument("--multiclass", action="store_true",
                    help="Train a 10-class network directly (all digits 0-9) "
                         "instead of the binary --target_a vs --target_b task.")
+    p.add_argument("--channels", default="image",
+                   help="Comma-separated layer-1 input channels. "
+                        "'image' (default) or 'image,gx,gy,lap' for the "
+                        "spatial edge/curvature bank.")
+    p.add_argument("--norm_parsimony", action="store_true",
+                   help="Divide the complexity penalty by n_classes "
+                        "(recommended for multi-class).")
     args = p.parse_args(argv)
 
     if args.multiclass:
@@ -117,16 +124,21 @@ def main(argv=None) -> int:
     print(f"\n[data] TRAIN: {imgs_tr.shape}, labels = {np.bincount(labels_tr)}")
     print(f"[data] TEST:  {imgs_te.shape}, labels = {np.bincount(labels_te)}")
 
+    channels = tuple(c.strip() for c in args.channels.split(",") if c.strip())
     cfg = NetworkGPConfig(
         pop_size=args.pop, n_gens=args.gens, K=args.K, n_classes=n_classes,
+        input_channels=channels,
         layer_1_max_depth=3, layer_2_max_depth=3,
         enable_2d=not args.no_2d,
         parsimony=args.parsimony,
+        normalize_parsimony_by_classes=args.norm_parsimony,
         tournament_size=3, crossover_rate=0.3,
         seed=args.seed, early_stop_patience=12,
         verbose=True,
         use_jax_eval=args.jax,
     )
+    print(f"[cfg] channels={channels}, n_classes={n_classes}, "
+          f"norm_parsimony={args.norm_parsimony}")
     print(f"\n[gp] pop={cfg.pop_size}, gens={cfg.n_gens}, K={cfg.K}, "
           f"enable_2d={cfg.enable_2d}")
     t0 = time.time()
