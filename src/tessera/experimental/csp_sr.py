@@ -693,6 +693,91 @@ def discover_boosted(env: Dict[str, np.ndarray], y: np.ndarray,
                          r2=layer_r2[-1], layer_r2=layer_r2)
 
 
+# --------------------------------------------------------------------
+# Deep symbolic network — width-W layers, each node an arbitrary
+# symbolic combination of ALL nodes from previous layers
+# --------------------------------------------------------------------
+# Generalizes discover_boosted (which is width 1). A DNN-shaped symbolic
+# net: layer 0 is the inputs; layer L has `width` nodes, each a free-form
+# csp expression over the CUMULATIVE pool of every prior node (inputs +
+# all earlier layers' outputs) — i.e. each node's input is an arbitrary
+# symbolic combination of all previous-layer nodes, exactly the target
+# architecture. Trainability without backprop: each node is SUPERVISED by
+# the running residual (symbolic gradient boosting), so a hidden node has
+# a target even though no gradient flows. Depth = how many times the pool
+# is refreshed (how much composition happens); width = nodes sharing each
+# pool snapshot. Output is the additive composition of all nodes, inlined
+# to one self-contained tessera Expr.
+#
+# This is the honest gradient-free realization of "deep net, each node an
+# arbitrary symbolic combination of all previous nodes": the credit for a
+# hidden node comes from the residual it is asked to fit, NOT from
+# end-to-end error backpropagated through later layers (which would need
+# the differentiable relaxation). It deepens the fit by composition; it is
+# not end-to-end representation learning.
+
+
+def discover_deep(env: Dict[str, np.ndarray], y: np.ndarray,
+                  depth: int = 4, width: int = 2,
+                  cfg: Optional[CSPSRConfig] = None, lr: float = 1.0,
+                  dense: bool = False,
+                  log: Callable[[str], None] = lambda s: None) -> BoostedResult:
+    """Deep symbolic network, gradient-free.
+
+    `depth` layers of `width` nodes each. Every node is a csp_sr expression
+    over a pool of prior nodes, fit to the running residual (boosting gives
+    each hidden node a target — no backprop). Output is the additive
+    composition of all nodes as one self-contained tessera Expr.
+
+    Connectivity (`dense`):
+      - `dense=False` (default): each layer reads the PREVIOUS layer's
+        `width` nodes + the original inputs (skip). The pool stays bounded
+        at `n_inputs + width`, so the per-layer dictionary is CONSTANT-size
+        and cost is depth-linear. A deep node still depends on every earlier
+        node — transitively, through COMPOSITION (`f(g(h(x)))`), not through
+        one flat enumeration over all of them. This is what keeps the search
+        space from exploding: depth replaces flat connectivity.
+      - `dense=True`: each layer reads ALL prior nodes (DenseNet-style).
+        Maximally expressive per layer, but the pool grows by `width` each
+        layer, so the dictionary grows polynomially (F^leaves) — only viable
+        for small problems / shallow stacks.
+
+    `discover_deep(..., width=1, dense=True)` ≈ `discover_boosted(augment=True)`."""
+    cfg = cfg or CSPSRConfig()
+    y = np.asarray(y, dtype=np.float64)
+    inputs = {k: np.asarray(v, dtype=np.float64) for k, v in env.items()}
+    pool = dict(inputs)
+    ss = float(np.sum((y - y.mean()) ** 2)) + 1e-30
+    total = np.zeros_like(y)
+    layers, layer_exprs, layer_r2, subs = [], [], [], {}
+    for L in range(depth):
+        new_feats = {}                       # name -> (pred array, composed expr)
+        for w in range(width):
+            res = discover(pool, y - total, cfg, log)
+            pred = np.asarray(evaluate(res.expr, pool), dtype=np.float64)
+            total = total + lr * pred
+            layers.append(res)
+            comp = _substitute(res.expr, subs)       # inline prior nodes
+            layer_exprs.append(comp if lr == 1.0
+                               else BinOp("mul", Const(float(lr)), comp))
+            new_feats[f"h{L}_{w}"] = (pred, comp)
+        if L < depth - 1:                    # cascade: build the next pool
+            for name, (pred, comp) in new_feats.items():
+                subs[name] = comp
+            outs = {n: p for n, (p, _) in new_feats.items()}
+            pool = {**pool, **outs} if dense else {**inputs, **outs}
+        layer_r2.append(float(1.0 - np.sum((y - total) ** 2) / ss))
+        log(f"layer {L} (width {width}, pool {len(pool)}): "
+            f"cumulative R2={layer_r2[-1]:.4f}")
+        if layer_r2[-1] > cfg.recover_thresh:
+            break
+    expr = layer_exprs[0]
+    for e in layer_exprs[1:]:
+        expr = BinOp("add", expr, e)
+    return BoostedResult(layers=layers, expr=expr,
+                         r2=layer_r2[-1], layer_r2=layer_r2)
+
+
 def expr_to_str(n: Node) -> str:
     """Readable infix-ish string for an Expr (independent of tessera's
     own printer, which we don't depend on here)."""
@@ -707,6 +792,6 @@ def expr_to_str(n: Node) -> str:
 
 __all__ = [
     "CSPSRConfig", "CSPSRResult", "discover", "expr_to_str",
-    "BoostedResult", "discover_boosted",
+    "BoostedResult", "discover_boosted", "discover_deep",
     "DEFAULT_UNARY", "DEFAULT_BINARY",
 ]
