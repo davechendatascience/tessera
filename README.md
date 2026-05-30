@@ -28,6 +28,70 @@ Distinct value vs other SR libraries:
   measure theory. Nonlinear (Volterra) extensions are exposed and
   clearly marked. GPU support is a tracked milestone (CPU works today).
 
+## ⭐ Gradient-free symbolic regression — `tessera.search.csp`
+
+Alongside the GP searcher, tessera ships a **gradient-free, enumerative** SR
+engine: a CSP-generated *const-free expression dictionary* (symmetry-broken,
+deduped) fit by a sparse **linear** combination — constants enter as
+closed-form least-squares coefficients, **no gradient descent** — plus a
+**top-down decomposition** driver (outer-op peel → polynomial-STLSQ leaf →
+validation-gated separability) that recovers deep compositional laws a flat
+search can't reach. It's the FFX / SINDy family with an AI-Feynman-style
+decomposition prepass, in tessera's operator vocabulary.
+
+```python
+import numpy as np
+from tessera.search.csp import discover_decompose
+
+env = {"v": np.random.uniform(0, 0.9, 2000)}
+y   = np.sqrt(1 - env["v"]**2)                      # relativistic factor
+res = discover_decompose(env, y)
+# -> sqrt(1 - v^2): recovered exactly (rel ~ 1e-30), gradient-free
+```
+
+**Feynman result (held-out, machine-precision symbolic match).** The
+decomposition prepass lifts *genuine exact* recovery from **8/30 → 24/30** on a
+30-equation Feynman subset, breaking the size-6 relativistic-form wall
+(`1/√(1−v²/c²)`) that a single enumeration cannot reach — gradient-free, seconds
+per equation on CPU. (`benchmarks/run_feynman_decompose.py`.)
+
+### How it compares
+
+A different *design point* from the heavyweight SR systems: it trades
+exhaustive constant optimisation for being **gradient-free, deterministic,
+fast, and machine-precision-exact** on the forms it reaches. The numbers below
+are **not** all apples-to-apples — recovery metric and benchmark subset differ
+(see caveats). The gplearn row is a true head-to-head on our exact subset and
+metric (`benchmarks/run_feynman_vs_baselines.py`).
+
+| Method | Family | Gradient-free | Feynman recovery | Cost |
+|---|---|---|---|---|
+| **`tessera.search.csp`** | enumerative dictionary + sparse-linear + decomposition | ✅ | **24/30 exact** + 4 approx (machine-precision, held-out) | gradient-free, CPU |
+| gplearn | genetic programming (no const-opt) | ✅ | **4/30 exact** + 2 approx (same subset/metric) | ~0.5s/eq (fast cfg) |
+| PySR [1] | GP + constant optimisation | ✅ | strong on full Feynman | Julia backend, slower |
+| AI-Feynman [2] | NN + dimensional analysis | ❌ (trains a NN) | ~90/100 full set, looser tol | NN/eq, heavy |
+| FFX [3] | basis enumeration + elastic-net | ✅ | linear-in-basis | fast, deterministic |
+| SINDy [4] | fixed library + sparse regression | ✅ | dynamics (≈ our poly-leaf) | fast |
+
+On this runnable head-to-head ([`run_feynman_vs_baselines.py`](benchmarks/run_feynman_vs_baselines.py)),
+tessera recovers **24/30 exact vs gplearn's 4/30** — gplearn (basic GP, no
+constant optimisation) reaches only the const-free product forms (`m·g·z`,
+`q/C`, …). The heavier PySR (GP **+** constant optimisation) and AI-Feynman
+(NN + dimensional analysis) recover more than us on the full set, but are far
+costlier — that's the design-point trade.
+
+> **Caveats (read these).** Our **24/30** uses a *strict* machine-precision
+> metric (`rel < 1e-8` — the true closed form, not just a good fit) on a
+> **30-equation subset**; AI-Feynman's ~90/100 is the **full 100** with a
+> looser tolerance. The table positions *design points*, not a single
+> leaderboard, and we do **not** claim to beat PySR/AI-Feynman on total
+> recovery — they're heavier and stronger there. tessera's edge is being
+> gradient-free, fast, exact-on-a-subset, and adding the decomposition prepass.
+
+<sub>[1] Cranmer 2023, PySR. [2] Udrescu & Tegmark 2020, AI-Feynman. [3]
+McConaghy 2011, FFX. [4] Brunton et al. 2016, SINDy. Decomposition follows
+AI-Feynman's separability/dimensional-analysis idea, gradient-free.</sub>
+
 ## Quickstart
 
 ```bash
@@ -75,6 +139,7 @@ print(f"loss={best.train_loss:.4g}  cx={best.complexity}  tree={best.tree}")
 |---|---|---|
 | [`tessera.expression`](src/tessera/expression/README.md) | shipping | Tree types, measure-theoretic operators, simplification, algebraic identities |
 | [`tessera.search`](src/tessera/search/README.md) | shipping | GP, Simulated Annealing, Random Search, Hall of Fame, branch-and-bound bounds |
+| [`tessera.search.csp`](docs/shipped/csp_symbolic_regression.md) | shipping | **Gradient-free enumerative SR**: CSP dictionary + sparse-linear fit + top-down decomposition (Feynman 8→24 exact). See [headline](#-gradient-free-symbolic-regression--tesserasearchcsp) |
 | [`tessera.koopman`](src/tessera/koopman/README.md) | shipping | Closed-form latent Koopman with time-delay embedding |
 | `tessera.expression.simplify` | shipping | Rule-based + AC-normalisation simplifier (canonical-form pass) |
 | `tessera.expression.axes` | shipping | Axis-semantic type system: Translation, CausalTranslation, Permutation, Cyclic, ... |
