@@ -36,7 +36,7 @@ import numpy as np
 from tessera.expression.tree import (
     Node, Var, Const, BinOp, UnOp, evaluate, complexity,
 )
-from tessera.sr.csp_sr import discover, CSPSRConfig, expr_to_str
+from tessera.search.csp.csp_sr import discover, CSPSRConfig, expr_to_str
 from tessera.experimental.coordinate_discovery import (
     TARGET_TRANSFORMS, INVERSE_TRANSFORMS,
 )
